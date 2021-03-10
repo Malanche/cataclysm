@@ -1,0 +1,14 @@
+[package]
+name = "cataclysm"
+version = "0.1.0"
+license = "MIT"
+description = "A simple http framework"
+repository = "https://github.com/Malanche/cataclysm.git"
+authors = ["Carlos Malanche <carlos.malanche.f@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = {version = "1.1.1", features = ["full"]}
+ctrlc = "3.1.7"
