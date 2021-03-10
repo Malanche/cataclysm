@@ -1,7 +1,7 @@
-use crate::http::{Response, Method, MethodHandler};
+use crate::http::{Response, MethodHandler};
 use std::future::Future;
-use std::collections::HashMap;
 
+#[allow(dead_code)]
 pub struct Path {
     original: String
 }
@@ -13,7 +13,7 @@ impl Path {
         }
     }
 
-    pub fn such_that<F: Fn() -> T, T: Future<Output = Response>>(self, method_handler: MethodHandler<F, T>) -> Self {
+    pub fn such_that<F: Fn() -> T, T: Future<Output = Response>>(self, _method_handler: MethodHandler<F, T>) -> Self {
         //self.handler = method_handler;
         self
     }

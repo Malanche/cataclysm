@@ -16,6 +16,7 @@ impl Method {
     }
 }
 
+#[allow(dead_code)]
 pub struct MethodHandler<F: Fn() -> T, T: Future<Output = Response>> {
     pub(crate) method: Method,
     pub(crate) handler: F

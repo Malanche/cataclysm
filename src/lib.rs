@@ -1,18 +1,20 @@
+extern crate ctrlc;
+
 use self::error::Error;
 mod error;
 pub use self::path::Path;
 mod path;
 
-use self::http::{Response, MethodHandler};
+use self::http::{Response};
 pub mod http;
 
-use self::api::{ApiResponse};
+//use self::api::{ApiResponse};
 mod api;
 
 extern crate tokio;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::io::AsyncWriteExt;
-use std::io::prelude::*;
+//use tokio::io::AsyncWriteExt;
+//use std::io::prelude::*;
 
 pub struct Server {
     paths: Vec<(String, Path)>
@@ -26,15 +28,19 @@ impl Server {
     pub async fn run(&self) -> Result<(), Error> {
         let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
 
+        // ctrl + c handler
+        ctrlc::set_handler(|| {
+            panic!("Panics other thread");
+        }).unwrap();
+
         loop {
-            let (mut socket, _) = listener.accept().await.unwrap();
+            let (socket, _) = listener.accept().await.unwrap();
 
             tokio::spawn(Server::socket_handler(socket));
         }
-        Ok(())
     }
 
-    async fn socket_handler(mut socket: TcpStream) -> Result<(), Error> {
+    async fn socket_handler(socket: TcpStream) -> Result<(), Error> {
         // We wait for the stream to be writable...
         
         loop {
@@ -45,7 +51,7 @@ impl Server {
             // if the readiness event is a false positive.
             match socket.try_write(&Response::new().body(b"<div>Hello!!!</div>").serialize()) {
             //match socket.try_write(b"Hola mundo\n") {
-                Ok(n) => {
+                Ok(_n) => {
                     break;
                 }
                 Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
