@@ -16,8 +16,7 @@ pub struct ServerBuilder {
 
 impl ServerBuilder {
     pub fn new(path: Path) -> ServerBuilder {
-        let mut tree = Tree::new();
-        tree.set(path);
+        let tree = Tree::new(path);
         ServerBuilder {
             tree
         }
@@ -39,28 +38,38 @@ struct Tree {
 }
 
 impl Tree {
-    fn new() -> Tree {
-        Tree {
+    fn new(mut path: Path) -> Tree {
+        let mut tree = Tree {
             branches: HashMap::new(),
             callees: HashMap::new()
-        }
-    }
-
-    /// Adds a leaf to the tree (if necessary)
-    fn set(&mut self, mut path: Path) {
-        if path.branches.len() != 0 {
-            for (id, path) in path.branches {
-                let mut tree = Tree::new();
-                tree.set(path);
-                self.branches.insert(id, tree);
-            }
-        }
-        match path.get_handler.take() {
-            Some(handler) => {
-                self.callees.insert(Method::Get, handler);
-            },
-            None => ()
         };
+
+        // Now we finish with the tokens
+        if path.tokenized_path.len() == 0 {
+            if path.branches.len() != 0 {
+                for mut inner_path in path.branches.into_iter() {
+                    // We check the composition of the id
+                    let id = inner_path.tokenized_path.remove(0);
+                    if inner_path.tokenized_path.len() == 0 {
+                        let inner_tree = Tree::new(inner_path);
+                        tree.branches.insert(id, inner_tree);
+                    }
+                }
+            }
+            match path.get_handler.take() {
+                Some(handler) => {
+                    tree.callees.insert(Method::Get, handler);
+                },
+                None => ()
+            };
+        } else {
+            // We go deeper
+            let id = path.tokenized_path.remove(0);
+            let inner_tree = Tree::new(path);
+            tree.branches.insert(id, inner_tree);
+        }
+
+        tree
     }
 
     fn get_handler(&self, tokens: Vec<String>) -> Option<&Box<dyn Processor + Send + Sync>> {
@@ -92,9 +101,9 @@ impl Server {
         ServerBuilder::new(path)
     }
 
-    pub async fn run(&self) -> Result<(), Error> {
-        let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-
+    pub async fn run<T: AsRef<str>>(&self, socket: T) -> Result<(), Error> {
+        let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
+        
         // We use mpsc because ctrlc requires an FnMut function
         let (tx, mut rx) = oneshot::channel::<()>();
         // We put the tx behind an arc mutex

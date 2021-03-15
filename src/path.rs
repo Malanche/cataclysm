@@ -4,48 +4,54 @@ use std::collections::HashMap;
 
 /// Main structure regarding 
 pub struct Path {
-    original: String,
+    /// Tokenized path. An empty vec means it replies to the root
+    pub(crate) tokenized_path: Vec<String>,
+    /// Handler associated to the get method
     pub(crate) get_handler: Option<Box<dyn Processor + Send + Sync>>,
-    pub(crate) branches: HashMap<String, Path>
-}
-
-async fn index() -> Response {
-    Response::new().body(b"<div>Hello!!!</div>")
+    /// Inner branches of the path
+    pub(crate) branches: Vec<Path>
 }
 
 impl Path {
-    pub fn new<T: Into<String>>(original: T) -> Path {
+    pub fn new<T: Into<String>>(path_string: T) -> Path {
+        let mut tokenized_path: Vec<_> = path_string.into().split("/").map(|v| v.to_string()).collect();
+        tokenized_path.retain(|v| v.len() != 0);
         Path {
-            original: original.into(),
+            tokenized_path: tokenized_path,
             get_handler: None,
-            branches: HashMap::new()
+            branches: Vec::new()
         }
     }
 
     /// Adds a callback to a method or a group of methods
+    ///
+    /// This function is the main building block for callbacks in the path tree
+    ///
+    /// ```
+    /// let server = Server::builder(
+    ///     Path::new("/scope").with(Method::Get.to(index))
+    /// ).build();
+    /// ```
     pub fn with<F: 'static + Fn() -> T + Sync + Send, T: Future<Output = Response> + Send + Sync>(mut self, method_handler: MethodHandler<F, T>) -> Self {
         self.get_handler = Some(Box::new(method_handler.handler));
         self
     }
 
     /// Adds a nested path to the actual path
+    ///
+    /// Usefull when you try to define scopes or so
+    ///
+    /// ```
+    /// let server = Server::builder(Path::new("/scope")
+    ///     .nested(Path::new("/index")
+    ///         // Method Get at /scope/index replies with index
+    ///         .with(Method::Get.to(index))
+    ///     )
+    /// ).build();
+    /// ```
     pub fn nested(mut self, mut path: Path) -> Self {
-        // First, we have to strip the path, using an iterator
-        let mut elements = path.original.split("/");
-        let first = elements.next().unwrap();
-        if first.len() == 0 {
-            // We use the next element, as the path started with /
-            let first = elements.next().unwrap().to_string();
-            path.original = elements.collect::<Vec<_>>().join("/");
-            self.branches.insert(first, path);
-        } else {
-            self.branches.insert(first.to_string(), path);
-        }
+        self.branches.push(path);
         self
-    }
-
-    pub(crate) fn get_root(&self) -> String {
-        self.original.clone()
     }
 }
 
