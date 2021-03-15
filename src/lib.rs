@@ -5,68 +5,19 @@ mod error;
 pub use self::path::Path;
 mod path;
 
-use self::http::{Response};
+use self::http::{Response, Request};
 pub mod http;
+
+pub use self::server::Server;
+mod server;
+
+pub use self::processor::Processor;
+mod processor;
+
+pub use self::logger::SimpleLogger;
+mod logger;
 
 //use self::api::{ApiResponse};
 mod api;
-
-extern crate tokio;
-use tokio::net::{TcpListener, TcpStream};
 //use tokio::io::AsyncWriteExt;
 //use std::io::prelude::*;
-
-pub struct Server {
-    paths: Vec<(String, Path)>
-}
-
-impl Server {
-    pub fn new() -> Server {
-        Server {paths: Vec::new()}
-    }
-
-    pub async fn run(&self) -> Result<(), Error> {
-        let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-
-        // ctrl + c handler
-        ctrlc::set_handler(|| {
-            panic!("Panics other thread");
-        }).unwrap();
-
-        loop {
-            let (socket, _) = listener.accept().await.unwrap();
-
-            tokio::spawn(Server::socket_handler(socket));
-        }
-    }
-
-    async fn socket_handler(socket: TcpStream) -> Result<(), Error> {
-        // We wait for the stream to be writable...
-        
-        loop {
-            // Wait for the socket to be writable
-            socket.writable().await.unwrap();
-    
-            // Try to write data, this may still fail with `WouldBlock`
-            // if the readiness event is a false positive.
-            match socket.try_write(&Response::new().body(b"<div>Hello!!!</div>").serialize()) {
-            //match socket.try_write(b"Hola mundo\n") {
-                Ok(_n) => {
-                    break;
-                }
-                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
-                    println!("Writing second");
-                    continue;
-                }
-                Err(e) => panic!("{}", e)
-            }
-        }
-        //socket.shutdown();
-        Ok(())
-    }
-
-    pub fn path(mut self, path: Path) -> Self {
-        self.paths.push((path.get_root(), path));
-        self
-    }
-}
