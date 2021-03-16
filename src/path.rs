@@ -2,7 +2,7 @@ use crate::{Processor, http::{Response, MethodHandler}};
 use std::future::Future;
 use std::collections::HashMap;
 
-/// Main structure regarding 
+/// Main building block for cataclysm 
 pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
