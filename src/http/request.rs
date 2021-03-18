@@ -4,12 +4,28 @@ use crate::{Error, http::Method};
 pub struct Request {
     pub(crate) method: Method,
     pub(crate) path: String,
-    headers: HashMap<String, String>,
-    content: Option<Vec<u8>>
+    pub(crate) headers: HashMap<String, String>,
+    pub(crate) addr: Option<std::net::SocketAddr>,
+    pub(crate) content: Vec<u8>
 }
 
 impl Request {
-    pub fn parse(source: Vec<u8>) -> Result<Request, Error> {
+    pub fn parse(mut source: Vec<u8>) -> Result<Request, Error> {
+        // http call should have at least 3 bytes. For sure
+        let (one, two) = (source.iter(), source.iter().skip(2));
+
+        let mut split_index = None;
+        for (idx, (a, b)) in one.zip(two).enumerate() {
+            if a==b && b==&b'\n' {
+                split_index = Some(idx);
+                break;
+            }
+        }
+
+        let split_index = split_index.ok_or(Error::Parse(format!(" no end of header was found")))?;
+
+        let content: Vec<_> = source.drain((split_index)..).collect();
+        //source.truncate(split_index);
         // Cambiamos esto a una cadena
         let request_string = String::from_utf8(source).map_err(|e| Error::Parse(format!("{}", e)))?;
         let mut lines = request_string.split("\n");
@@ -22,14 +38,20 @@ impl Request {
         let path = tokens[1].to_string();
         let version = tokens[2];
         // Parse following lines
-        for _line in lines {
-            
+        let mut headers = HashMap::new();
+        for line in lines {
+            let idx = line.find(":").ok_or(Error::Parse(format!("corrupted header missing colon")))?;
+            let (key, value) = line.split_at(idx);
+            let (key, value) = (key.to_string(), value.trim_start_matches(": ").trim_end().to_string());
+            headers.insert(key, value);
         }
+        log::info!("{:?}", headers);
         Ok(Request {
             method,
             path,
-            headers: HashMap::new(),
-            content: None
+            headers,
+            addr: None,
+            content
         })
     }
 }

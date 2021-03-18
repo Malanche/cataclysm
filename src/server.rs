@@ -132,10 +132,10 @@ impl Server {
             
             select! {
                 res = next_connection => match res {
-                    Ok((socket, _)) => {
+                    Ok((socket, addr)) => {
                         let tree_clone = self.tree.clone();
                         tokio::spawn(async move {
-                            match Server::dispatch(socket, tree_clone).await {
+                            match Server::dispatch(socket, addr, tree_clone).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     error!("{}", e);
@@ -201,11 +201,12 @@ impl Server {
         }
     }
 
-    async fn dispatch(socket: TcpStream, tree: Arc<RwLock<Tree>>) -> Result<(), Error> {
+    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, tree: Arc<RwLock<Tree>>) -> Result<(), Error> {
         let request_bytes = Server::dispatch_read(&socket).await?;
 
         match Request::parse(request_bytes) {
-            Ok(request) => {
+            Ok(mut request) => {
+                request.addr = Some(addr);
                 let mut token_iter = request.path.split("/");
                 // We advance one to skip the whitespace before the root
                 let _ = token_iter.next();
@@ -216,14 +217,14 @@ impl Server {
                         match tree.get_handler(tokens) {
                             Some(handler) => {
                                 //Response::new().body(b"<div>Hello!!!</div>")
-                                handler.handle().await
+                                handler.handle(&request).await
                             },
                             None => Response::not_found()
                         }
                     },
                     Err(e) => Response::internal_server_error()
                 };
-                info!("[{} {}] {}", request.method.to_str(), request.path, response.status.0);
+                info!("[{} {}] {} from {}", request.method.to_str(), request.path, response.status.0, addr);
                 Server::dispatch_write(socket, response).await?;
             },
             Err(e) => {

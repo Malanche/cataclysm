@@ -38,6 +38,9 @@ mod processor;
 pub use self::logger::SimpleLogger;
 mod logger;
 
+pub use self::extractor::Extractor;
+mod extractor;
+
 //use self::api::{ApiResponse};
 mod api;
 //use tokio::io::AsyncWriteExt;

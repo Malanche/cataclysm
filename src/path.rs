@@ -32,7 +32,7 @@ impl Path {
     ///     Path::new("/scope").with(Method::Get.to(index))
     /// ).build();
     /// ```
-    pub fn with<F: 'static + Fn() -> T + Sync + Send, T: Future<Output = Response> + Send + Sync>(mut self, method_handler: MethodHandler<F, T>) -> Self {
+    pub fn with<F: 'static + Processor + Sync + Send>(mut self, method_handler: MethodHandler<F>) -> Self {
         self.get_handler = Some(Box::new(method_handler.handler));
         self
     }

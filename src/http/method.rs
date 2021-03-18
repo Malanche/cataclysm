@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use crate::http::{Response};
+use crate::{Processor, http::{Response}};
 
 /// Available methods for HTTP Requests
 #[derive(PartialEq, Hash)]
@@ -25,7 +25,7 @@ impl Eq for Method{}
 
 impl Method {
     /// Turns the Method into a MethodHandler, which is a short for a tuple Method - Handler
-    pub fn to<F: Fn() -> T, T: Future<Output = Response>>(self, handler: F) -> MethodHandler<F, T> {
+    pub fn to<F: Processor>(self, handler: F) -> MethodHandler<F> {
         MethodHandler{
             method: self,
             handler
@@ -58,7 +58,7 @@ impl Method {
     }
 }
 
-pub struct MethodHandler<F: Fn() -> T, T: Future<Output = Response>> {
+pub struct MethodHandler<F: Processor> {
     pub(crate) method: Method,
     pub(crate) handler: F
 }
