@@ -1,13 +1,14 @@
-use crate::{Processor, http::{Response, MethodHandler}};
+use crate::{Callback, http::{Response, Request, MethodHandler}};
 use std::future::Future;
 use std::collections::HashMap;
+use std::pin::Pin;
 
 /// Main building block for cataclysm 
 pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
     /// Handler associated to the get method
-    pub(crate) get_handler: Option<Box<dyn Processor + Send + Sync>>,
+    pub(crate) get_handler: Option<Box<dyn Fn(&Request) -> Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>>,
     /// Inner branches of the path
     pub(crate) branches: Vec<Path>
 }
@@ -32,8 +33,12 @@ impl Path {
     ///     Path::new("/scope").with(Method::Get.to(index))
     /// ).build();
     /// ```
-    pub fn with<F: 'static + Processor + Sync + Send>(mut self, method_handler: MethodHandler<F>) -> Self {
-        self.get_handler = Some(Box::new(method_handler.handler));
+    pub fn with(mut self, method_handler: MethodHandler) -> Self {
+        self.get_handler = Some(method_handler.handler);
+        //self.get_handler = Some(Box::new(move |request: &Request| {
+        //    method_handler.handler
+        //}));
+        //self.get_handler = Some(Box::new(method_handler.handler));
         self
     }
 

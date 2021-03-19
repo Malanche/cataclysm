@@ -1,6 +1,7 @@
+use futures::future::FutureExt;
 use std::future::Future;
-
-use crate::{Processor, http::{Response}};
+use std::pin::Pin;
+use crate::{Callback, Extractor, http::{Response, Request}};
 
 /// Available methods for HTTP Requests
 #[derive(PartialEq, Hash)]
@@ -25,10 +26,13 @@ impl Eq for Method{}
 
 impl Method {
     /// Turns the Method into a MethodHandler, which is a short for a tuple Method - Handler
-    pub fn to<F: Processor>(self, handler: F) -> MethodHandler<F> {
+    pub fn to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(self, handler: F) -> MethodHandler {
         MethodHandler{
             method: self,
-            handler
+            handler: Box::new(move |req: &Request|  {
+                let args = <A as Extractor>::extract(req);
+                handler.invoke(args).boxed()
+            })
         }
     }
 
@@ -58,7 +62,7 @@ impl Method {
     }
 }
 
-pub struct MethodHandler<F: Processor> {
+pub struct MethodHandler {
     pub(crate) method: Method,
-    pub(crate) handler: F
+    pub(crate) handler: Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>
 }

@@ -21,12 +21,12 @@ async fn main() {
     SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     
     let server = Server::builder(
-        Path::new("/hello")//.with(Method::Get.to(hello))
+        Path::new("/hello").with(Method::Get.to(hello))
             .nested(Path::new("/world")
-                .with(Method::Get.to(retrieve)))
-            //.nested(Path::new("/data")
-            //    .with(Method::Post.to(retrieve))
-        //)
+                .with(Method::Get.to(world)))
+            .nested(Path::new("/data")
+                .with(Method::Post.to(retrieve))
+        )
     ).build();
 
     server.run("localhost:8000").await.unwrap();

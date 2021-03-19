@@ -32,14 +32,11 @@ pub mod http;
 pub use self::server::Server;
 mod server;
 
-pub use self::processor::Processor;
-mod processor;
+pub use self::metafunctions::{Callback, Extractor};
+mod metafunctions;
 
 pub use self::logger::SimpleLogger;
 mod logger;
-
-pub use self::extractor::Extractor;
-mod extractor;
 
 //use self::api::{ApiResponse};
 mod api;

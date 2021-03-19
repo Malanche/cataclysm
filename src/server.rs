@@ -1,5 +1,5 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Path, Processor, Response, http::{Method, MethodHandler, Request}, Error};
+use crate::{Path, Callback, Response, http::{Method, MethodHandler, Request}, Error};
 use log::{info, error, trace};
 use futures::{
     select,
@@ -8,6 +8,8 @@ use futures::{
 };
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
+use std::pin::Pin;
+use std::future::Future;
 use std::collections::HashMap;
 
 pub struct ServerBuilder {
@@ -24,7 +26,7 @@ impl ServerBuilder {
 
     pub fn build(self) -> Server {
         Server {
-            tree: Arc::new(RwLock::new(self.tree))
+            tree: Arc::new(self.tree)
         }
     }
 }
@@ -34,7 +36,7 @@ struct Tree {
     /// Branches that require a simple matching
     branches: HashMap<String, Tree>,
     /// Functions that reply in this specific endpoint
-    callees: HashMap<Method, Box<dyn Processor + Send + Sync>>
+    callees: HashMap<Method, Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>>
 }
 
 impl Tree {
@@ -72,7 +74,7 @@ impl Tree {
         tree
     }
 
-    fn get_handler(&self, tokens: Vec<String>) -> Option<&Box<dyn Processor + Send + Sync>> {
+    fn get_handler(&self, tokens: Vec<String>) -> Option<&Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>> {
         if tokens.len() == 1 {
             if tokens[0] == "" {
                 // We go to the get callee
@@ -92,7 +94,7 @@ impl Tree {
 ///
 /// The Server structure hosts all the information to successfully process each call
 pub struct Server {
-    tree: Arc<RwLock<Tree>>
+    tree: Arc<Tree>
 }
 
 impl Server {
@@ -201,7 +203,7 @@ impl Server {
         }
     }
 
-    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, tree: Arc<RwLock<Tree>>) -> Result<(), Error> {
+    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, tree: Arc<Tree>) -> Result<(), Error> {
         let request_bytes = Server::dispatch_read(&socket).await?;
 
         match Request::parse(request_bytes) {
@@ -212,17 +214,25 @@ impl Server {
                 let _ = token_iter.next();
                 let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
                 
+                /*
                 let response = match tree.try_read() {
                     Ok(tree) => {
                         match tree.get_handler(tokens) {
                             Some(handler) => {
-                                //Response::new().body(b"<div>Hello!!!</div>")
-                                handler.handle(&request).await
+                                //handler(&request).await
                             },
                             None => Response::not_found()
                         }
                     },
                     Err(e) => Response::internal_server_error()
+                };
+                */
+                let response = match tree.get_handler(tokens) {
+                    Some(handler) => {
+                        log::info!("Antvoque");
+                        handler(&request).await
+                    },
+                    None => Response::not_found()
                 };
                 info!("[{} {}] {} from {}", request.method.to_str(), request.path, response.status.0, addr);
                 Server::dispatch_write(socket, response).await?;
