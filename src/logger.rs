@@ -3,7 +3,6 @@
 use chrono::Local;
 use colored::*;
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-use std::collections::HashMap;
 
 pub struct SimpleLogger {
     default_level: LevelFilter,

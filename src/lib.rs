@@ -26,7 +26,6 @@ mod error;
 pub use self::path::Path;
 mod path;
 
-use self::http::{Response, Request};
 pub mod http;
 
 pub use self::server::Server;

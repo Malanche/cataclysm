@@ -14,6 +14,12 @@ impl Extractor for Vec<u8> {
     }
 }
 
+impl Extractor for String {
+    fn extract(req: &Request) -> Self {
+        String::from_utf8(req.content.clone()).unwrap()
+    }
+}
+
 impl Extractor for () {
     fn extract(_req: &Request) -> Self {
         ()

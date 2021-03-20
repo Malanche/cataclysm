@@ -4,7 +4,7 @@ use crate::{Error, http::Method};
 pub struct Request {
     pub(crate) method: Method,
     pub(crate) path: String,
-    pub(crate) headers: HashMap<String, String>,
+    pub headers: HashMap<String, String>,
     pub(crate) addr: Option<std::net::SocketAddr>,
     pub(crate) content: Vec<u8>
 }
@@ -22,7 +22,7 @@ impl Request {
             }
         }
 
-        let split_index = split_index.ok_or(Error::Parse(format!(" no end of header was found")))?;
+        let split_index = split_index.ok_or(Error::Parse(format!("no end of header was found")))?;
 
         let content: Vec<_> = source.drain((split_index)..).collect();
         //source.truncate(split_index);
@@ -36,7 +36,7 @@ impl Request {
         }
         let method = Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?;
         let path = tokens[1].to_string();
-        let version = tokens[2];
+        let _version = tokens[2];
         // Parse following lines
         let mut headers = HashMap::new();
         for line in lines {

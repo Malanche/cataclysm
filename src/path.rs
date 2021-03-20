@@ -1,6 +1,4 @@
-use crate::{Callback, http::{Response, Request, MethodHandler}};
-use std::future::Future;
-use std::collections::HashMap;
+use crate::{http::{Response, Request, MethodHandler}};
 use std::pin::Pin;
 
 /// Main building block for cataclysm 
@@ -34,7 +32,11 @@ impl Path {
     /// ).build();
     /// ```
     pub fn with(mut self, method_handler: MethodHandler) -> Self {
-        self.get_handler = Some(method_handler.handler);
+        match method_handler.method {
+            _all => {
+                self.get_handler = Some(method_handler.handler);
+            }
+        };
         //self.get_handler = Some(Box::new(move |request: &Request| {
         //    method_handler.handler
         //}));
@@ -54,7 +56,7 @@ impl Path {
     ///     )
     /// ).build();
     /// ```
-    pub fn nested(mut self, mut path: Path) -> Self {
+    pub fn nested(mut self, path: Path) -> Self {
         self.branches.push(path);
         self
     }

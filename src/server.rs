@@ -1,5 +1,5 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Path, Callback, Response, http::{Method, MethodHandler, Request}, Error};
+use crate::{Path, http::{Method, Request, Response}, Error};
 use log::{info, error, trace};
 use futures::{
     select,
@@ -7,7 +7,6 @@ use futures::{
     channel::oneshot
 };
 use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
 use std::pin::Pin;
 use std::future::Future;
 use std::collections::HashMap;
@@ -16,6 +15,9 @@ pub struct ServerBuilder {
     tree: Tree
 }
 
+/// Builder pattern for the server structure
+///
+/// 
 impl ServerBuilder {
     pub fn new(path: Path) -> ServerBuilder {
         let tree = Tree::new(path);
@@ -74,18 +76,18 @@ impl Tree {
         tree
     }
 
-    fn get_handler(&self, tokens: Vec<String>) -> Option<&Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>> {
+    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>> {
         if tokens.len() == 1 {
             if tokens[0] == "" {
                 // We go to the get callee
-                return self.callees.get(&Method::Get)
+                return self.callees.get(&method)
             } else {
-                return self.branches.get(&tokens[0]).map(|v| v.get_handler(vec!["".to_string()])).flatten();
+                return self.branches.get(&tokens[0]).map(|v| v.get_handler(vec!["".to_string()], method)).flatten();
             }
         } else {
             let mut token_iter = tokens.into_iter();
             let id = token_iter.next().unwrap();
-            return self.branches.get(&id).map(|v| v.get_handler(token_iter.collect())).flatten();
+            return self.branches.get(&id).map(|v| v.get_handler(token_iter.collect(), method)).flatten();
         }
     }
 }
@@ -116,7 +118,10 @@ impl Server {
                 Ok(mut locked) => match (*locked).take() {
                     Some(tx) => {
                         info!("Shut down requested");
-                        tx.send(());
+                        match tx.send(()) {
+                            Ok(_) => (),
+                            Err(_) => error!("could not complete request")
+                        };
                     },
                     None => {
                         info!("Working on it!");
@@ -213,21 +218,7 @@ impl Server {
                 // We advance one to skip the whitespace before the root
                 let _ = token_iter.next();
                 let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
-                
-                /*
-                let response = match tree.try_read() {
-                    Ok(tree) => {
-                        match tree.get_handler(tokens) {
-                            Some(handler) => {
-                                //handler(&request).await
-                            },
-                            None => Response::not_found()
-                        }
-                    },
-                    Err(e) => Response::internal_server_error()
-                };
-                */
-                let response = match tree.get_handler(tokens) {
+                let response = match tree.get_handler(tokens, &request.method) {
                     Some(handler) => {
                         log::info!("Antvoque");
                         handler(&request).await

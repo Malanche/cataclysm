@@ -10,22 +10,20 @@ async fn world() -> Response {
     Response::ok().body("world!")
 }
 
-async fn retrieve(data: Vec<u8>) -> Response {
-    log::info!("{}", String::from_utf8(data).unwrap());
-    Response::ok().body("haha")
-}
-
 // #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     
     let server = Server::builder(
-        Path::new("/hello").with(Method::Get.to(hello))
+        Path::new("/").with(Method::Get.to(hello))
             .nested(Path::new("/world")
                 .with(Method::Get.to(world)))
             .nested(Path::new("/data")
-                .with(Method::Post.to(retrieve))
+                .with(Method::Post.to(|data: Vec<u8>| async {
+                    log::info!("{}", String::from_utf8(data).unwrap());
+                    Response::ok().body("haha")
+                }))
         )
     ).build();
 
