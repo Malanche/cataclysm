@@ -1,20 +1,20 @@
 //! # Cataclysm: A simple http framework
 //!
-//! Cataclysm is a small personal proyect that uses [`tokio`](https://docs.rs/tokio) to build a small, simple and fast asynchronous web server.
-//!
-//! An example of minimal code to start a server is the following
+//! Cataclysm is a small personal project, an http framework influenced by [`actix-web`](https://actix.rs/), and built over [`tokio`](https://tokio.rs/). A minimal working example is the following
 //! 
 //! ```
+//! extern crate cataclysm;
+//! 
 //! use cataclysm::{Server, Path, http::{Response, Method}};
 //! 
-//! async fn hello_world() -> Response {
-//!     Response::ok().body("hola mundo")
+//! async fn hello() -> Response {
+//!     Response::ok().body("hello")
 //! }
 //! 
 //! #[tokio::main]
 //! async fn main() {
 //!     let server = Server::builder(
-//!         Path::new("/").with(Method::Get.to(hello_world))
+//!         Path::new("/hello").with(Method::Get.to(hello))
 //!     ).build();
 //! 
 //!     server.run("localhost:8000").await.unwrap();
@@ -26,6 +26,7 @@ mod error;
 pub use self::path::Path;
 mod path;
 
+/// Contains the specific functionality for http interaction
 pub mod http;
 
 pub use self::server::Server;

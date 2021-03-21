@@ -2,7 +2,12 @@ use crate::{WrappedHandler, Callback, Extractor, http::{Request, Method, MethodH
 use std::collections::HashMap;
 use futures::future::FutureExt;
 
-/// Main building block for cataclysm 
+/// Main building block for cataclysm
+///
+/// The Path structure is meant to construct a __tree__ of possible paths that http calls can follow in order to give out a response
+/// ```
+/// let server_path = Path::new("/").with(Method::Get.to(index));
+/// ```
 pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
@@ -57,11 +62,43 @@ impl Path {
         self
     }
 
+    /// Adds a default path, in case of no nested matching.
+    ///
+    /// ```
+    /// let server = Server::builder(
+    ///     Path::new("/").defaults_to(|| async {
+    ///         Response::ok().body("Are you lost?")
+    ///     })
+    /// ).build();
+    /// ```
     pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, handler: F) -> Self {
         self.default_method = Some(Box::new(move |req: &Request|  {
             let args = <A as Extractor>::extract(req);
             handler.invoke(args).boxed()
         }));
+        self
+    }
+
+    /// Adds a default method responder, in case no specific handler is found.
+    ///
+    /// By default, unmatched methods reply with a `405 Method Not Allowed`, but this function allows override of such behaviour.
+    ///
+    /// ```
+    /// let server = Server::builder(
+    ///     Path::new("/").with(Method::Get.to(|| async {
+    ///         Response::ok().body("Supported!")
+    ///     })).unmatched_method_to(|| async {
+    ///         Response::ok().body("Unsupported, please try with GET")
+    ///     })
+    /// ).build();
+    /// ```
+    pub fn unmatched_method_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, handler: F) -> Self {
+        /*
+        self.default_method = Some(Box::new(move |req: &Request|  {
+            let args = <A as Extractor>::extract(req);
+            handler.invoke(args).boxed()
+        }));
+        */
         self
     }
 }
