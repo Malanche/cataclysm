@@ -4,7 +4,7 @@ use std::pin::Pin;
 use crate::{Callback, Extractor, http::{Response, Request}};
 
 /// Available methods for HTTP Requests
-#[derive(PartialEq, Hash)]
+#[derive(Clone, PartialEq, Hash)]
 pub enum Method {
     /// Get method
     Get,

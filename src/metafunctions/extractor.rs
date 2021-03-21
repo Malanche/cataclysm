@@ -20,20 +20,39 @@ impl Extractor for String {
     }
 }
 
+impl Extractor for Request {
+    fn extract(req: &Request) -> Self {
+        req.clone()
+    }
+}
+
+// Implementation for empty tupple, functions with no arguments
 impl Extractor for () {
     fn extract(_req: &Request) -> Self {
         ()
     }
 }
 
-impl<A> Extractor for (A,) where A: Extractor {
-    fn extract(req: &Request) -> Self {
-        (A::extract(req),)
+/// This macro implements the trait for a given indexed tuple
+macro_rules! tuple_extractor {
+    ($struct_name:ident) => {
+        impl<$struct_name> Extractor for ($struct_name,) where $struct_name: Extractor {
+            fn extract(req: &Request) -> Self {
+                ($struct_name::extract(req),)
+            }
+        }
+    };
+    ($($struct_name:ident),+) => {
+        impl<$($struct_name),+> Extractor for ($($struct_name),+) where $($struct_name: Extractor),+ {
+            fn extract(req: &Request) -> Self {
+                ($($struct_name::extract(req)),+)
+            }
+        }
     }
 }
 
-impl<A, B> Extractor for (A, B) where A: Extractor, B: Extractor {
-    fn extract(req: &Request) -> Self {
-        (A::extract(req), B::extract(req))
-    }
-}
+tuple_extractor!(A);
+tuple_extractor!(A, B);
+tuple_extractor!(A, B, C);
+tuple_extractor!(A, B, C, D);
+tuple_extractor!(A, B, C, D, E);

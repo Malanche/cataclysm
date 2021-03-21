@@ -1,5 +1,5 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Path, http::{Method, Request, Response}, Error};
+use crate::{Path, WrappedHandler, http::{Method, Request, Response}, Error};
 use log::{info, error, trace};
 use futures::{
     select,
@@ -7,8 +7,6 @@ use futures::{
     channel::oneshot
 };
 use std::sync::{Arc, Mutex};
-use std::pin::Pin;
-use std::future::Future;
 use std::collections::HashMap;
 
 pub struct ServerBuilder {
@@ -38,14 +36,17 @@ struct Tree {
     /// Branches that require a simple matching
     branches: HashMap<String, Tree>,
     /// Functions that reply in this specific endpoint
-    callees: HashMap<Method, Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>>
+    callees: HashMap<Method, WrappedHandler>,
+    /// Default function to be called if necessary
+    default_callee: Option<WrappedHandler>
 }
 
 impl Tree {
     fn new(mut path: Path) -> Tree {
         let mut tree = Tree {
             branches: HashMap::new(),
-            callees: HashMap::new()
+            callees: HashMap::new(),
+            default_callee: None
         };
 
         // Now we finish with the tokens
@@ -60,12 +61,12 @@ impl Tree {
                     }
                 }
             }
-            match path.get_handler.take() {
-                Some(handler) => {
-                    tree.callees.insert(Method::Get, handler);
-                },
-                None => ()
-            };
+            // We add the method calls in this level of the tree
+            for (method, handler) in path.method_handlers.into_iter() {
+                tree.callees.insert(method, handler);
+            }
+            // We copy the default callee
+            tree.default_callee = path.default_method;
         } else {
             // We go deeper
             let id = path.tokenized_path.remove(0);
@@ -76,18 +77,22 @@ impl Tree {
         tree
     }
 
-    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>> {
+    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&WrappedHandler> {
         if tokens.len() == 1 {
             if tokens[0] == "" {
                 // We go to the get callee
-                return self.callees.get(&method)
+                self.callees.get(&method).or(self.default_callee.as_ref())
             } else {
-                return self.branches.get(&tokens[0]).map(|v| v.get_handler(vec!["".to_string()], method)).flatten();
+                return self.branches.get(&tokens[0]).map(|v| {
+                    v.get_handler(vec!["".to_string()], method)
+                }).flatten().or(self.default_callee.as_ref());
             }
         } else {
             let mut token_iter = tokens.into_iter();
             let id = token_iter.next().unwrap();
-            return self.branches.get(&id).map(|v| v.get_handler(token_iter.collect(), method)).flatten();
+            return self.branches.get(&id).map(|v| {
+                v.get_handler(token_iter.collect(), method)
+            }).flatten().or(self.default_callee.as_ref());
         }
     }
 }
@@ -220,7 +225,6 @@ impl Server {
                 let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
                 let response = match tree.get_handler(tokens, &request.method) {
                     Some(handler) => {
-                        log::info!("Antvoque");
                         handler(&request).await
                     },
                     None => Response::not_found()

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::{Error, http::Method};
 
+#[derive(Clone)]
 pub struct Request {
     pub(crate) method: Method,
     pub(crate) path: String,
@@ -45,7 +46,6 @@ impl Request {
             let (key, value) = (key.to_string(), value.trim_start_matches(": ").trim_end().to_string());
             headers.insert(key, value);
         }
-        log::info!("{:?}", headers);
         Ok(Request {
             method,
             path,

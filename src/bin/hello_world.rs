@@ -16,6 +16,13 @@ async fn main() {
     SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     
     let server = Server::builder(
+        Path::new("/").with(Method::Get.to(hello)).with(Method::Post.to(world)).defaults_to(|| async {
+            Response::ok().body("Perdido?")
+        })
+    ).build();
+
+    /*
+    let server = Server::builder(
         Path::new("/").with(Method::Get.to(hello))
             .nested(Path::new("/world")
                 .with(Method::Get.to(world)))
@@ -26,6 +33,7 @@ async fn main() {
                 }))
         )
     ).build();
+    */
 
     server.run("localhost:8000").await.unwrap();
 }

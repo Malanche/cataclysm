@@ -1,4 +1,4 @@
-pub use self::callback::{Callback};
+pub use self::callback::{Callback, WrappedHandler};
 mod callback;
 
 pub use self::extractor::Extractor;

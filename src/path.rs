@@ -1,12 +1,15 @@
-use crate::{http::{Response, Request, MethodHandler}};
-use std::pin::Pin;
+use crate::{WrappedHandler, Callback, Extractor, http::{Request, Method, MethodHandler}};
+use std::collections::HashMap;
+use futures::future::FutureExt;
 
 /// Main building block for cataclysm 
 pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
-    /// Handler associated to the get method
-    pub(crate) get_handler: Option<Box<dyn Fn(&Request) -> Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>>,
+    /// Map of functions
+    pub(crate) method_handlers: HashMap<Method, WrappedHandler>,
+    /// Default method to invoke, in case no branch gets a match
+    pub(crate) default_method: Option<WrappedHandler>,
     /// Inner branches of the path
     pub(crate) branches: Vec<Path>
 }
@@ -17,7 +20,8 @@ impl Path {
         tokenized_path.retain(|v| v.len() != 0);
         Path {
             tokenized_path: tokenized_path,
-            get_handler: None,
+            method_handlers: HashMap::new(),
+            default_method: None,
             branches: Vec::new()
         }
     }
@@ -32,15 +36,7 @@ impl Path {
     /// ).build();
     /// ```
     pub fn with(mut self, method_handler: MethodHandler) -> Self {
-        match method_handler.method {
-            _all => {
-                self.get_handler = Some(method_handler.handler);
-            }
-        };
-        //self.get_handler = Some(Box::new(move |request: &Request| {
-        //    method_handler.handler
-        //}));
-        //self.get_handler = Some(Box::new(method_handler.handler));
+        self.method_handlers.insert(method_handler.method, method_handler.handler);
         self
     }
 
@@ -58,6 +54,14 @@ impl Path {
     /// ```
     pub fn nested(mut self, path: Path) -> Self {
         self.branches.push(path);
+        self
+    }
+
+    pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, handler: F) -> Self {
+        self.default_method = Some(Box::new(move |req: &Request|  {
+            let args = <A as Extractor>::extract(req);
+            handler.invoke(args).boxed()
+        }));
         self
     }
 }

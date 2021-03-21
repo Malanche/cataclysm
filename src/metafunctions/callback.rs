@@ -1,7 +1,10 @@
-use crate::{Extractor, http::Response};
+use crate::{Extractor, http::{Response, Request}};
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
+
+/// Short for the function signature that wraps the handlers
+pub type WrappedHandler = Box<dyn Fn(&Request) -> Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {
@@ -40,24 +43,3 @@ callback_for_many!(A 0, B 1);
 callback_for_many!(A 0, B 1, C 2);
 callback_for_many!(A 0, B 1, C 2, D 3);
 callback_for_many!(A 0, B 1, C 2, D 3, E 4);
-
-/*
-macro_rules! callback_for_tuple {
-    ($($param_names:ident),+) => {
-        impl<F, R, $($param_names),+> Callback<($($param_names),+,)> for F where F: Fn($($param_names),+) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static, $($param_names),+ {
-            fn invoke(&self, args: (A,)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
-                self(args.0).boxed()
-            }
-        }
-    }
-}
-*/
-
-/*
-// Now, macro to implement for tuples of up to 4 extractors
-impl<F, R, A> Callback<(A,)> for F where F: Fn(A) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static, A: Extractor {
-    fn invoke(&self, args: (A,)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
-        self(args.0).boxed()
-    }
-}
-*/
