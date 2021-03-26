@@ -1,5 +1,5 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Path, WrappedHandler, http::{Method, Request, Response}, Error};
+use crate::{Path, CoreFn, LayerFn, Pipeline, http::{Method, Request, Response}, Error};
 use log::{info, error, trace};
 use futures::{
     select,
@@ -36,9 +36,11 @@ struct Tree {
     /// Branches that require a simple matching
     branches: HashMap<String, Tree>,
     /// Functions that reply in this specific endpoint
-    callees: HashMap<Method, WrappedHandler>,
+    callees: HashMap<Method, CoreFn>,
     /// Default function to be called if necessary
-    default_callee: Option<WrappedHandler>
+    default_callee: Option<CoreFn>,
+    /// Middleware functions
+    layer_functions: Vec<Arc<LayerFn>>
 }
 
 impl Tree {
@@ -46,7 +48,8 @@ impl Tree {
         let mut tree = Tree {
             branches: HashMap::new(),
             callees: HashMap::new(),
-            default_callee: None
+            default_callee: None,
+            layer_functions: path.layer_functions.drain(..).collect()
         };
 
         // Now we finish with the tokens
@@ -73,21 +76,45 @@ impl Tree {
             let inner_tree = Tree::new(path);
             tree.branches.insert(id, inner_tree);
         }
-
         tree
     }
 
-    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&WrappedHandler> {
+    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&CoreFn> {
         if tokens.len() == 1 {
+            // This means we are in the end of the tree
             if tokens[0] == "" {
                 // We go to the get callee
                 self.callees.get(&method).or(self.default_callee.as_ref())
             } else {
+                // We are in the last branch
                 return self.branches.get(&tokens[0]).map(|v| {
                     v.get_handler(vec!["".to_string()], method)
                 }).flatten().or(self.default_callee.as_ref());
             }
         } else {
+            // We need to keep walking the tree
+            let mut token_iter = tokens.into_iter();
+            let id = token_iter.next().unwrap();
+            return self.branches.get(&id).map(|v| {
+                v.get_handler(token_iter.collect(), method)
+            }).flatten().or(self.default_callee.as_ref());
+        }
+    }
+
+    fn get_pipeline(&self, tokens: Vec<String>, method: &Method) -> (Option<&CoreFn>, Vec<Arc<Layer>>) {
+        if tokens.len() == 1 {
+            // This means we are in the end of the tree
+            if tokens[0] == "" {
+                // We go to the get callee
+                self.callees.get(&method).or(self.default_callee.as_ref())
+            } else {
+                // We are in the last branch
+                return self.branches.get(&tokens[0]).map(|v| {
+                    v.get_handler(vec!["".to_string()], method)
+                }).flatten().or(self.default_callee.as_ref());
+            }
+        } else {
+            // We need to keep walking the tree
             let mut token_iter = tokens.into_iter();
             let id = token_iter.next().unwrap();
             return self.branches.get(&id).map(|v| {
@@ -225,7 +252,14 @@ impl Server {
                 let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
                 let response = match tree.get_handler(tokens, &request.method) {
                     Some(handler) => {
-                        handler(&request).await
+                        /*
+                        type Middleware = Box<dyn Fn(&Request, std::vec::IntoIter<Middleware>) -> std::pin::Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>;
+                        let middlewares = vec![Box::new(|req: &Request, layers: std::vec::IntoIter<Middleware>| async {
+                            layers.next().unwrap()(req, layers).await
+                        })];
+                        */
+                        //middleware(&request)
+                        handler(request.clone()).await
                     },
                     None => Response::not_found()
                 };

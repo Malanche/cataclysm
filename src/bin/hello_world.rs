@@ -1,6 +1,7 @@
 extern crate cataclysm;
 
-use cataclysm::{Server, Path, http::{Response, Method}, SimpleLogger};
+use futures::future::FutureExt;
+use cataclysm::{Server, Path, Pipeline, http::{Response, Request, Method}, SimpleLogger};
 
 async fn hello() -> Response {
     Response::ok().body("hello")
@@ -16,12 +17,27 @@ async fn main() {
     SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     
     let server = Server::builder(
+        Path::new("/").with(Method::Get.to(hello)).middleware(|req: Request, pipeline: Box<Pipeline>| async {
+            // Example of timing middleware
+            let now = std::time::Instant::now();
+            let request = match *pipeline {
+                Pipeline::Layer(function, nested_pipeline) => function(req, nested_pipeline),
+                Pipeline::Core(function) => function(req)
+            }.await;
+            let elapsed = now.elapsed().as_millis();
+            log::info!("Process time: {}", elapsed);
+            request
+        }.boxed())
+    ).build();
+
+    /*
+    let server = Server::builder(
         Path::new("/").with(Method::Get.to(hello)).with(Method::Post.to(world)).defaults_to(|| async {
             Response::ok().body("Perdido?")
         })
     ).build();
 
-    /*
+
     let server = Server::builder(
         Path::new("/").with(Method::Get.to(hello))
             .nested(Path::new("/world")

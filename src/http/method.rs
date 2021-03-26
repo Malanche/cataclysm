@@ -29,8 +29,8 @@ impl Method {
     pub fn to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(self, handler: F) -> MethodHandler {
         MethodHandler{
             method: self,
-            handler: Box::new(move |req: &Request|  {
-                let args = <A as Extractor>::extract(req);
+            handler: Box::new(move |req: Request|  {
+                let args = <A as Extractor>::extract(&req);
                 handler.invoke(args).boxed()
             })
         }
@@ -64,5 +64,5 @@ impl Method {
 
 pub struct MethodHandler {
     pub(crate) method: Method,
-    pub(crate) handler: Box<dyn Fn(&Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>
+    pub(crate) handler: Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>
 }

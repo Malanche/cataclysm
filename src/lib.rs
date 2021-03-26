@@ -32,7 +32,7 @@ pub mod http;
 pub use self::server::Server;
 mod server;
 
-pub use self::metafunctions::{Callback, WrappedHandler, Extractor};
+pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 mod metafunctions;
 
 pub use self::logger::SimpleLogger;

@@ -1,4 +1,4 @@
-pub use self::callback::{Callback, WrappedHandler};
+pub use self::callback::{Callback, CoreFn, LayerFn, Pipeline};
 mod callback;
 
 pub use self::extractor::Extractor;

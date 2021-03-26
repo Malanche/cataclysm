@@ -2,9 +2,17 @@ use crate::{Extractor, http::{Response, Request}};
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
+use std::sync::Arc;
 
-/// Short for the function signature that wraps the handlers
-pub type WrappedHandler = Box<dyn Fn(&Request) -> Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>;
+pub enum Pipeline {
+    Layer(Arc<LayerFn>, Box<Pipeline>),
+    Core(Arc<CoreFn>)
+}
+
+/// Type for the core handlers, that is, the ones that actually create a response
+pub type CoreFn = Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+/// Type representing middleware functions
+pub type LayerFn = Box<dyn Fn(Request, Box<Pipeline>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {

@@ -1,6 +1,9 @@
-use crate::{WrappedHandler, Callback, Extractor, http::{Request, Method, MethodHandler}};
+use crate::{CoreFn, LayerFn, Pipeline, Callback, Extractor, http::{Request, Response, Method, MethodHandler}};
 use std::collections::HashMap;
 use futures::future::FutureExt;
+use std::sync::Arc;
+use std::pin::Pin;
+use std::future::Future;
 
 /// Main building block for cataclysm
 ///
@@ -12,11 +15,13 @@ pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
     /// Map of functions
-    pub(crate) method_handlers: HashMap<Method, WrappedHandler>,
+    pub(crate) method_handlers: HashMap<Method, CoreFn>,
     /// Default method to invoke, in case no branch gets a match
-    pub(crate) default_method: Option<WrappedHandler>,
+    pub(crate) default_method: Option<CoreFn>,
     /// Inner branches of the path
-    pub(crate) branches: Vec<Path>
+    pub(crate) branches: Vec<Path>,
+    // /// Contains the middlewares that apply to this node and all the branches that depend on it
+    pub(crate) layer_functions: Vec<Arc<LayerFn>>
 }
 
 impl Path {
@@ -27,7 +32,8 @@ impl Path {
             tokenized_path: tokenized_path,
             method_handlers: HashMap::new(),
             default_method: None,
-            branches: Vec::new()
+            branches: Vec::new(),
+            layer_functions: Vec::new()
         }
     }
 
@@ -72,8 +78,8 @@ impl Path {
     /// ).build();
     /// ```
     pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, handler: F) -> Self {
-        self.default_method = Some(Box::new(move |req: &Request|  {
-            let args = <A as Extractor>::extract(req);
+        self.default_method = Some(Box::new(move |req: Request|  {
+            let args = <A as Extractor>::extract(&req);
             handler.invoke(args).boxed()
         }));
         self
@@ -99,6 +105,31 @@ impl Path {
             handler.invoke(args).boxed()
         }));
         */
+        self
+    }
+
+    pub fn middleware<F: Fn(Request, Box<Pipeline>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
+        /*
+        self.default_method = Some(Box::new(move |req: &Request, layers: Iterator<ProcessLayer>| -> Response {
+            // Start measuring time
+            let now = Instant::now();
+            // Execute handler
+
+            let response = match process_layer {
+                Middleware(middleware, process_layer) => {
+                    middleware(req, process_layer).await
+                },
+                Core(handler) => {
+                    handler(req).await
+                }
+            }
+            let response = handler(req).await;
+            // "Stop timer"
+            let count = now.elapsed().as_millis();
+            response
+        }));
+        */
+        self.layer_functions.push(Arc::new(Box::new(layer_fn)));
         self
     }
 }
