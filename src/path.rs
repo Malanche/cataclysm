@@ -15,9 +15,9 @@ pub struct Path {
     /// Tokenized path. An empty vec means it replies to the root
     pub(crate) tokenized_path: Vec<String>,
     /// Map of functions
-    pub(crate) method_handlers: HashMap<Method, CoreFn>,
+    pub(crate) method_handlers: HashMap<Method, Arc<CoreFn>>,
     /// Default method to invoke, in case no branch gets a match
-    pub(crate) default_method: Option<CoreFn>,
+    pub(crate) default_method: Option<Arc<CoreFn>>,
     /// Inner branches of the path
     pub(crate) branches: Vec<Path>,
     // /// Contains the middlewares that apply to this node and all the branches that depend on it
@@ -47,7 +47,7 @@ impl Path {
     /// ).build();
     /// ```
     pub fn with(mut self, method_handler: MethodHandler) -> Self {
-        self.method_handlers.insert(method_handler.method, method_handler.handler);
+        self.method_handlers.insert(method_handler.method, Arc::new(method_handler.handler));
         self
     }
 
@@ -78,10 +78,10 @@ impl Path {
     /// ).build();
     /// ```
     pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, handler: F) -> Self {
-        self.default_method = Some(Box::new(move |req: Request|  {
+        self.default_method = Some(Arc::new(Box::new(move |req: Request|  {
             let args = <A as Extractor>::extract(&req);
             handler.invoke(args).boxed()
-        }));
+        })));
         self
     }
 
@@ -109,28 +109,23 @@ impl Path {
     }
 
     pub fn middleware<F: Fn(Request, Box<Pipeline>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
-        /*
-        self.default_method = Some(Box::new(move |req: &Request, layers: Iterator<ProcessLayer>| -> Response {
-            // Start measuring time
-            let now = Instant::now();
-            // Execute handler
-
-            let response = match process_layer {
-                Middleware(middleware, process_layer) => {
-                    middleware(req, process_layer).await
-                },
-                Core(handler) => {
-                    handler(req).await
-                }
-            }
-            let response = handler(req).await;
-            // "Stop timer"
-            let count = now.elapsed().as_millis();
-            response
-        }));
-        */
         self.layer_functions.push(Arc::new(Box::new(layer_fn)));
         self
+    }
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let mut s = format!("> path: /{}", self.tokenized_path.join("/"));
+        for (method, _) in &self.method_handlers {
+            s += &format!("\n> Method {} has custom reply", method.to_str());
+        }
+        s += &format!("\n> Node has {} layer(s)", self.layer_functions.len());
+        // Now each branch
+        for branch in &self.branches {
+            s += &format!("\n{}", branch).replace("\n", "\n--");
+        }
+        write!(formatter, "{}", s)
     }
 }
 

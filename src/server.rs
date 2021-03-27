@@ -36,9 +36,9 @@ struct Tree {
     /// Branches that require a simple matching
     branches: HashMap<String, Tree>,
     /// Functions that reply in this specific endpoint
-    callees: HashMap<Method, CoreFn>,
+    callees: HashMap<Method, Arc<CoreFn>>,
     /// Default function to be called if necessary
-    default_callee: Option<CoreFn>,
+    default_callee: Option<Arc<CoreFn>>,
     /// Middleware functions
     layer_functions: Vec<Arc<LayerFn>>
 }
@@ -79,7 +79,8 @@ impl Tree {
         tree
     }
 
-    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<&CoreFn> {
+    /*
+    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<Arc<CoreFn>> {
         if tokens.len() == 1 {
             // This means we are in the end of the tree
             if tokens[0] == "" {
@@ -100,26 +101,45 @@ impl Tree {
             }).flatten().or(self.default_callee.as_ref());
         }
     }
+    */
 
-    fn get_pipeline(&self, tokens: Vec<String>, method: &Method) -> (Option<&CoreFn>, Vec<Arc<Layer>>) {
+    fn get_handler_and_layers(&self, tokens: Vec<String>, method: &Method) -> (Option<Arc<CoreFn>>, Vec<Arc<LayerFn>>) {
         if tokens.len() == 1 {
             // This means we are in the end of the tree
             if tokens[0] == "" {
                 // We go to the get callee
-                self.callees.get(&method).or(self.default_callee.as_ref())
+                (self.callees.get(&method).or(self.default_callee.as_ref()).map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect())
             } else {
                 // We are in the last branch
+                // Option<(Option<CoreFn>, Vec<_>)>
                 return self.branches.get(&tokens[0]).map(|v| {
-                    v.get_handler(vec!["".to_string()], method)
-                }).flatten().or(self.default_callee.as_ref());
+                    v.get_handler_and_layers(vec!["".to_string()], method)
+                }).unwrap_or((self.default_callee.as_ref().map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect()));
             }
         } else {
             // We need to keep walking the tree
             let mut token_iter = tokens.into_iter();
             let id = token_iter.next().unwrap();
             return self.branches.get(&id).map(|v| {
-                v.get_handler(token_iter.collect(), method)
-            }).flatten().or(self.default_callee.as_ref());
+                v.get_handler_and_layers(token_iter.collect(), method)
+            }).unwrap_or((self.default_callee.as_ref().map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect()));
+        }
+    }
+
+    /// Creates the pipeline of futures to be processed by the server
+    fn get_pipeline(&self, tokens: Vec<String>, method: &Method) -> Option<Pipeline> {
+        // We get the core handler, and the possible layers
+        let (core, layers) = self.get_handler_and_layers(tokens, method);
+
+        if let Some(core) = core {
+            let mut pipeline_layer = Pipeline::Core(Arc::clone(&core));
+            for function in &self.layer_functions {
+                pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
+            }
+            // We return the nested pipeline
+            Some(pipeline_layer)
+        } else {
+            None
         }
     }
 }
@@ -250,6 +270,7 @@ impl Server {
                 // We advance one to skip the whitespace before the root
                 let _ = token_iter.next();
                 let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
+                /*
                 let response = match tree.get_handler(tokens, &request.method) {
                     Some(handler) => {
                         /*
@@ -260,6 +281,16 @@ impl Server {
                         */
                         //middleware(&request)
                         handler(request.clone()).await
+                    },
+                    None => Response::not_found()
+                };
+                */
+                let response = match tree.get_pipeline(tokens, &request.method) {
+                    Some(pipeline) => {
+                        match pipeline {
+                            Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer),
+                            Pipeline::Core(core_fn) => core_fn(request.clone())
+                        }.await
                     },
                     None => Response::not_found()
                 };
