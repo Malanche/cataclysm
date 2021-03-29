@@ -38,6 +38,9 @@ mod metafunctions;
 pub use self::logger::SimpleLogger;
 mod logger;
 
+pub use self::session::Session;
+mod session;
+
 //use self::api::{ApiResponse};
 mod api;
 //use tokio::io::AsyncWriteExt;

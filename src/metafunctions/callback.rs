@@ -4,9 +4,19 @@ use std::pin::Pin;
 use std::future::Future;
 use std::sync::Arc;
 
+/// Pipeline type, contains either a layer or the core of the pipeline
 pub enum Pipeline {
     Layer(Arc<LayerFn>, Box<Pipeline>),
     Core(Arc<CoreFn>)
+}
+
+impl Pipeline {
+    pub fn execute(self, s: Request) ->  Pin<Box<dyn Future<Output = Response> + Send>> {
+        match self {
+            Pipeline::Layer(func, pipeline_layer) => func(s, pipeline_layer),
+            Pipeline::Core(core_fn) => core_fn(s)
+        }.boxed()
+    }
 }
 
 /// Type for the core handlers, that is, the ones that actually create a response

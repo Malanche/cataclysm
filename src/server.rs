@@ -65,11 +65,11 @@ impl Tree {
                 }
             }
             // We add the method calls in this level of the tree
-            for (method, handler) in path.method_handlers.into_iter() {
-                tree.callees.insert(method, handler);
+            for (method, callback) in path.method_callbacks.into_iter() {
+                tree.callees.insert(method, callback);
             }
             // We copy the default callee
-            tree.default_callee = path.default_method;
+            tree.default_callee = path.default_callback;
         } else {
             // We go deeper
             let id = path.tokenized_path.remove(0);
@@ -79,30 +79,30 @@ impl Tree {
         tree
     }
 
-    /*
-    fn get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<Arc<CoreFn>> {
+    /// Retrieves a handler from the tree
+    fn _get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<Arc<CoreFn>> {
         if tokens.len() == 1 {
             // This means we are in the end of the tree
             if tokens[0] == "" {
                 // We go to the get callee
-                self.callees.get(&method).or(self.default_callee.as_ref())
+                self.callees.get(&method).or(self.default_callee.as_ref()).map(|v| Arc::clone(v))
             } else {
                 // We are in the last branch
                 return self.branches.get(&tokens[0]).map(|v| {
-                    v.get_handler(vec!["".to_string()], method)
-                }).flatten().or(self.default_callee.as_ref());
+                    v._get_handler(vec!["".to_string()], method)
+                }).flatten().or(self.default_callee.as_ref().map(|v| Arc::clone(v)));
             }
         } else {
             // We need to keep walking the tree
             let mut token_iter = tokens.into_iter();
             let id = token_iter.next().unwrap();
             return self.branches.get(&id).map(|v| {
-                v.get_handler(token_iter.collect(), method)
-            }).flatten().or(self.default_callee.as_ref());
+                v._get_handler(token_iter.collect(), method)
+            }).flatten().or(self.default_callee.as_ref().map(|v| Arc::clone(v)));
         }
     }
-    */
 
+    /// Retrieves the handler and the layers from the tree
     fn get_handler_and_layers(&self, tokens: Vec<String>, method: &Method) -> (Option<Arc<CoreFn>>, Vec<Arc<LayerFn>>) {
         if tokens.len() == 1 {
             // This means we are in the end of the tree
@@ -133,7 +133,7 @@ impl Tree {
 
         if let Some(core) = core {
             let mut pipeline_layer = Pipeline::Core(Arc::clone(&core));
-            for function in &self.layer_functions {
+            for function in &layers {
                 pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
             }
             // We return the nested pipeline

@@ -19,17 +19,15 @@ async fn main() {
     let path = Path::new("/")
         .with(Method::Get.to(hello))
         .with(Method::Post.to(world))
-        .middleware(|req: Request, pipeline: Box<Pipeline>| async {
+        .layer(|req: Request, pipeline: Box<Pipeline>| async {
         // Example of timing middleware
         let now = std::time::Instant::now();
-        let request = match *pipeline {
-            Pipeline::Layer(function, nested_pipeline) => function(req, nested_pipeline),
-            Pipeline::Core(function) => function(req)
-        }.await;
+        
+        let request = pipeline.execute(req).await;
         let elapsed = now.elapsed().as_nanos();
         log::info!("Process time: {} ns", elapsed);
         request
-    }.boxed()).nested(Path::new("hola").with(Method::Delete.to(hello)));
+    }.boxed());
 
     let concr = format!("{}", path);
     for line in concr.split("\n") {

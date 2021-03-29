@@ -43,3 +43,26 @@ Some data can be retrieved from an http request by just adding arguments to the 
 
 * `String`: Tries to extract the body as a valid utf-8 string. Returns Bad-Request if the operation fails
 * `Vec<u8>`: Returns the content of the `http` call as a stream of bytes
+* `Request`: Returns the request for a bit more control within the callback
+
+## Layers
+
+Cataclysm allows for layer handling, a.k.a. middleware.
+
+```Rust
+let path = Path::new("/hello")
+    .with(Method::Get.to(world))
+    .layer(|req: Request, pipeline: Box<Pipeline>| async {
+        // Example of timing layer / middleware
+        let now = std::time::Instant::now();
+        // Execute the deeper layers of the pipeline
+        let response = pipeline.execute(req).await;
+        // Measure and print time
+        let elapsed = now.elapsed().as_nanos();
+        info!("Process time: {} ns", elapsed);
+        // We return the request for further possible processing.
+        request
+}.boxed()).nested(Path::new("hola").with(Method::Delete.to(hello)));
+```
+
+As seen in the example, layer functions receive a `Request` and a boxed `Pipeline` enum. The `Pipeline` enum contains a nested structure of futures (the layers + the core handler), and has the `execute` to simplify things a bit. This function must return a `Pin<Box<_>>` future, so either use the `boxed` method from the `FutureExt` trait from the `futures` crate, or wrap it manually.
