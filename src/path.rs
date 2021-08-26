@@ -9,6 +9,11 @@ use std::future::Future;
 ///
 /// The Path structure is meant to construct a __tree__ of possible paths that http calls can follow in order to give out a response
 /// ```
+/// # use cataclysm::{Path, http::{Method, Response}};
+/// async fn index() -> Response {
+///     Response::ok().body("hello")
+/// }
+///
 /// let server_path = Path::new("/").with(Method::Get.to(index));
 /// ```
 pub struct Path {
@@ -29,7 +34,8 @@ pub struct Path {
 impl Path {
     /// Creates a new path, represented by the passed string.
     ///
-    /// ```
+    /// ```rust
+    /// # use cataclysm::Path;
     /// let path = Path::new("/hello/world");
     /// ```
     ///
@@ -49,12 +55,18 @@ impl Path {
 
     /// Adds a callback to a method or a group of methods
     ///
-    /// This function is the main building block for callbacks in the path tree
+    /// This function is the main building block for callbacks in the path tree. A [MethodHandler](crate::http::MethodHandler) consists of a Method, and a callback function. Se the [Method](crate::http::Method) structure to see how to construct them.
     ///
-    /// ```
-    /// let server = Server::builder(
-    ///     Path::new("/scope").with(Method::Get.to(index))
-    /// ).build();
+    /// ```rust
+    /// use cataclysm::{Path, http::{Method, Response}};
+    ///
+    /// // Example index function
+    /// async fn index() -> Response {
+    ///     Response::ok().body("hello")
+    /// }
+    ///
+    /// // Path that will reply go a get method
+    /// let path = Path::new("/scope").with(Method::Get.to(index));
     /// ```
     pub fn with(mut self, method_callback: MethodHandler) -> Self {
         self.method_callbacks.insert(method_callback.method, Arc::new(method_callback.handler));
@@ -65,13 +77,20 @@ impl Path {
     ///
     /// Usefull when you try to define scopes or so
     ///
-    /// ```
-    /// let server = Server::builder(Path::new("/scope")
+    /// ```rust
+    /// use cataclysm::{Path, http::{Method, Response}};
+    ///
+    /// // Example index function
+    /// async fn index() -> Response {
+    ///     Response::ok().body("hello")
+    /// }
+    ///
+    /// // Nested path
+    /// let path = Path::new("/scope")
     ///     .nested(Path::new("/index")
     ///         // Method Get at /scope/index replies with index
     ///         .with(Method::Get.to(index))
-    ///     )
-    /// ).build();
+    /// );
     /// ```
     pub fn nested(mut self, path: Path) -> Self {
         self.branches.push(path);
@@ -80,12 +99,12 @@ impl Path {
 
     /// Adds a default path, in case of no nested matching.
     ///
-    /// ```
-    /// let server = Server::builder(
-    ///     Path::new("/").defaults_to(|| async {
-    ///         Response::ok().body("Are you lost?")
-    ///     })
-    /// ).build();
+    /// ```rust
+    /// use cataclysm::{Path, http::{Response}}; 
+    ///
+    /// let path = Path::new("/").defaults_to(|| async {
+    ///     Response::ok().body("Are you lost?")
+    /// });
     /// ```
     pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, callback: F) -> Self {
         self.default_callback = Some(Arc::new(Box::new(move |req: Request|  {
@@ -99,14 +118,13 @@ impl Path {
     ///
     /// By default, unmatched methods reply with a `405 Method Not Allowed`, but this function allows override of such behaviour.
     ///
-    /// ```
-    /// let server = Server::builder(
-    ///     Path::new("/").with(Method::Get.to(|| async {
-    ///         Response::ok().body("Supported!")
-    ///     })).unmatched_method_to(|| async {
-    ///         Response::ok().body("Unsupported, please try with GET")
-    ///     })
-    /// ).build();
+    /// ```rust
+    /// # use cataclysm::{Path, http::{Response, Method}};
+    /// let path = Path::new("/").with(Method::Get.to(|| async {
+    ///     Response::ok().body("Supported!")
+    /// })).unmatched_method_to(|| async {
+    ///     Response::ok().body("Unsupported, please try with GET")
+    /// });
     /// ```
     pub fn unmatched_method_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, callback: F) -> Self {
         self.default_method_callback = Some(Arc::new(Box::new(move |req: Request|  {
@@ -121,6 +139,9 @@ impl Path {
     /// A layer is what is commonly known as middleware. The passed layer methods act as a wrap to the core handling functions of this path. It is important to note that layer functions have a very specific structure: each one receives a [`Request`](crate::http::Request) and a boxed [`Pipeline`](crate::Pipeline). The function must return a pinned boxed future. A Timing Layer/Middleware function is provided as an example
     ///
     /// ```
+    /// use cataclysm::{Path, Pipeline, http::{Request, Response, Method}};
+    /// use futures::future::FutureExt;
+    /// 
     /// let path = Path::new("/hello")
     ///     .with(Method::Get.to(|| async {Response::ok().body("¡Hola!")}))
     ///     .layer(|req: Request, pipeline: Box<Pipeline>| async {
@@ -130,10 +151,11 @@ impl Path {
     ///         let response = pipeline.execute(req).await;
     ///         // Measure and print time
     ///         let elapsed = now.elapsed().as_nanos();
-    ///         info!("Process time: {} ns", elapsed);
+    ///         println!("Process time: {} ns", elapsed);
     ///         // We return the request for further possible processing.
-    ///         request
-    /// }.boxed());
+    ///         response
+    ///     }.boxed()
+    /// );
     /// ```
     ///
     /// Calling the function multiple times will wrap the preceeding layer (or core handlers), like an onion 🧅.

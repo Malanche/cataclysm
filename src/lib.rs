@@ -2,7 +2,7 @@
 //!
 //! Cataclysm is a small personal project, an http framework influenced by [`actix-web`](https://actix.rs/), and built over [`tokio`](https://tokio.rs/). A minimal working example is the following
 //! 
-//! ```
+//! ```rust,no_run
 //! extern crate cataclysm;
 //! 
 //! use cataclysm::{Server, Path, http::{Response, Method}};

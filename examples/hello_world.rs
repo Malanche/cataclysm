@@ -1,13 +1,13 @@
-extern crate cataclysm;
-
 use futures::future::FutureExt;
 use cataclysm::{Server, Path, Pipeline, http::{Response, Request, Method}, SimpleLogger};
 
 async fn hello() -> Response {
+    log::info!("hello callback called!");
     Response::ok().body("hello")
 }
 
 async fn world() -> Response {
+    log::info!("world callback called!");
     Response::ok().body("world!")
 }
 
@@ -20,14 +20,14 @@ async fn main() {
         .with(Method::Get.to(hello))
         .with(Method::Post.to(world))
         .layer(|req: Request, pipeline: Box<Pipeline>| async {
-        // Example of timing middleware
-        let now = std::time::Instant::now();
-        
-        let request = pipeline.execute(req).await;
-        let elapsed = now.elapsed().as_nanos();
-        log::info!("Process time: {} ns", elapsed);
-        request
-    }.boxed());
+            // Example of timing middleware
+            log::info!("Time measuring begins");
+            let now = std::time::Instant::now();
+            let request = pipeline.execute(req).await;
+            let elapsed = now.elapsed().as_nanos();
+            log::info!("Process time: {} ns", elapsed);
+            request
+        }.boxed());
 
     let concr = format!("{}", path);
     for line in concr.split("\n") {
