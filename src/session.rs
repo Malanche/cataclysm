@@ -1,4 +1,4 @@
-use crate::{Extractor, http::Request};
+use crate::{Extractor, Error, http::Request};
 use std::collections::HashMap;
 use cookie::Cookie;
 
@@ -25,17 +25,17 @@ impl Session {
 }
 
 impl Extractor for Session {
-    fn extract(req: &Request) -> Self {
+    fn extract(req: &Request) -> Result<Self, Error> {
         if let Some(cookie_string) = req.headers.get("Cookie") {
             let _cookie = match Cookie::parse(cookie_string) {
                 Ok(v) => v,
-                Err(_e) => return Session::new()
+                Err(_e) => return Ok(Session::new())
             };
-            Session {
+            Ok(Session {
                 values: HashMap::new()
-            }
+            })
         } else {
-            return Session::new()
+            return Ok(Session::new())
         }
     }
 }

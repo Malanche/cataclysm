@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 /// Pipeline type, contains either a layer or the core of the pipeline
 pub enum Pipeline {
+    /// Processing layer
     Layer(Arc<LayerFn>, Box<Pipeline>),
+    /// Core layer
     Core(Arc<CoreFn>)
 }
 
@@ -55,7 +57,7 @@ macro_rules! callback_for_many {
     }
 }
 
-// Here we are
+// We implement the trait for up to 5 arguments at the moment
 callback_for_many!(A 0);
 callback_for_many!(A 0, B 1);
 callback_for_many!(A 0, B 1, C 2);

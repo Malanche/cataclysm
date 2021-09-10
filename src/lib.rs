@@ -5,16 +5,16 @@
 //! ```rust,no_run
 //! extern crate cataclysm;
 //! 
-//! use cataclysm::{Server, Path, http::{Response, Method}};
+//! use cataclysm::{Server, Branch, http::{Response, Method}};
 //! 
-//! async fn hello() -> Response {
-//!     Response::ok().body("hello")
+//! async fn index() -> Response {
+//!     Response::ok().body("Hello, World!")
 //! }
 //! 
 //! #[tokio::main]
 //! async fn main() {
 //!     let server = Server::builder(
-//!         Path::new("/hello").with(Method::Get.to(hello))
+//!         Branch::new("/").with(Method::Get.to(index))
 //!     ).build();
 //! 
 //!     server.run("localhost:8000").await.unwrap();
@@ -23,13 +23,13 @@
 
 use self::error::Error;
 mod error;
-pub use self::path::Path;
-mod path;
+pub use self::branch::{Branch};
+mod branch;
 
 /// Contains the specific functionality for http interaction
 pub mod http;
 
-pub use self::server::Server;
+pub use self::server::{Server, ServerBuilder};
 mod server;
 
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};

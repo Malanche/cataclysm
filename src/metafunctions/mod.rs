@@ -5,7 +5,7 @@ pub use self::extractor::Extractor;
 mod extractor;
 
 /*
-// The metafunctions module contains the implementation of a simulation of "variadic" functions in Rust.
+// The metafunctions module contains the implementation of an emulation of "variadic" functions in Rust.
 //
 // It works by using macros and generic parameters (which can be found in the `callback.rs` file) and
 // also using traits (found in the `extractor.rs` file). The last important part is located in `http/method.rs`,

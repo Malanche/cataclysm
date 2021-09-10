@@ -30,8 +30,15 @@ impl Method {
         MethodHandler{
             method: self,
             handler: Box::new(move |req: Request|  {
-                let args = <A as Extractor>::extract(&req);
-                handler.invoke(args).boxed()
+                //let args = <A as Extractor>::extract(&req);
+                //handler.invoke(args).boxed()
+                match <A as Extractor>::extract(&req) {
+                    Ok(args) => handler.invoke(args).boxed(),
+                    Err(e) => {
+                        println!("{}", e);
+                        (async {Response::bad_request()}).boxed()
+                    }
+                }
             })
         }
     }

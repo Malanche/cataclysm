@@ -4,7 +4,7 @@ pub struct Response {
     protocol: String,
     pub(crate) status: (u32, &'static str),
     headers: HashMap<String, String>,
-    content: Vec<u8>
+    pub content: Vec<u8>
 }
 
 impl Into<Response> for (u32, &'static str) {

@@ -1,4 +1,4 @@
-//! Logger to be removed, based on Borntyping's Simple Logger https://github.com/borntyping/rust-simple_logger
+//! Logger to be removed, based on Borntyping's Simple Logger <https://github.com/borntyping/rust-simple_logger>
 
 use chrono::Local;
 use colored::*;

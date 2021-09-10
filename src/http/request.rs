@@ -3,9 +3,15 @@ use crate::{Error, http::Method};
 
 #[derive(Clone)]
 pub struct Request {
+    /// Method that the request used
     pub(crate) method: Method,
+    /// Route that the user requested
     pub(crate) path: String,
+    /// Variable positions, if any (this is used by the Path structure)
+    pub(crate) variable_indices: Vec<usize>,
+    /// headers from the request
     pub headers: HashMap<String, String>,
+    /// Address from the request
     pub(crate) addr: Option<std::net::SocketAddr>,
     pub(crate) content: Vec<u8>
 }
@@ -49,6 +55,7 @@ impl Request {
         Ok(Request {
             method,
             path,
+            variable_indices: vec![],
             headers,
             addr: None,
             content

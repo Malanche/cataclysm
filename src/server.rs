@@ -1,5 +1,5 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Path, CoreFn, LayerFn, Pipeline, http::{Method, Request, Response}, Error};
+use crate::{Branch, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
 use log::{info, error, trace};
 use futures::{
     select,
@@ -7,139 +7,32 @@ use futures::{
     channel::oneshot
 };
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 pub struct ServerBuilder {
-    tree: Tree
+    branch: Branch
 }
 
 /// Builder pattern for the server structure
 ///
-/// 
+/// It is the main method for building a server and configuring certain behaviour
 impl ServerBuilder {
-    pub fn new(path: Path) -> ServerBuilder {
-        let tree = Tree::new(path);
+    /// Creates a new server from a given branch
+    ///
+    /// ```rust,no_run
+    /// # use cataclysm::{ServerBuilder, Branch, http::{Method, Response}};
+    /// let branch = Branch::new("/").with(Method::Get.to(|| async {Response::ok().body("Ok!")}));
+    /// let mut server_builder = ServerBuilder::new(branch);
+    /// // ...
+    /// ```
+    pub fn new(branch: Branch) -> ServerBuilder {
         ServerBuilder {
-            tree
+            branch
         }
     }
 
     pub fn build(self) -> Server {
         Server {
-            tree: Arc::new(self.tree)
-        }
-    }
-}
-
-/// Structure that holds the entire structure
-struct Tree {
-    /// Branches that require a simple matching
-    branches: HashMap<String, Tree>,
-    /// Functions that reply in this specific endpoint
-    callees: HashMap<Method, Arc<CoreFn>>,
-    /// Default function to be called if necessary
-    default_callee: Option<Arc<CoreFn>>,
-    /// Middleware functions
-    layer_functions: Vec<Arc<LayerFn>>
-}
-
-impl Tree {
-    fn new(mut path: Path) -> Tree {
-        let mut tree = Tree {
-            branches: HashMap::new(),
-            callees: HashMap::new(),
-            default_callee: None,
-            layer_functions: path.layer_functions.drain(..).collect()
-        };
-
-        // Now we finish with the tokens
-        if path.tokenized_path.len() == 0 {
-            if path.branches.len() != 0 {
-                for mut inner_path in path.branches.into_iter() {
-                    // We check the composition of the id
-                    let id = inner_path.tokenized_path.remove(0);
-                    if inner_path.tokenized_path.len() == 0 {
-                        let inner_tree = Tree::new(inner_path);
-                        tree.branches.insert(id, inner_tree);
-                    }
-                }
-            }
-            // We add the method calls in this level of the tree
-            for (method, callback) in path.method_callbacks.into_iter() {
-                tree.callees.insert(method, callback);
-            }
-            // We copy the default callee
-            tree.default_callee = path.default_callback;
-        } else {
-            // We go deeper
-            let id = path.tokenized_path.remove(0);
-            let inner_tree = Tree::new(path);
-            tree.branches.insert(id, inner_tree);
-        }
-        tree
-    }
-
-    /// Retrieves a handler from the tree
-    fn _get_handler(&self, tokens: Vec<String>, method: &Method) -> Option<Arc<CoreFn>> {
-        if tokens.len() == 1 {
-            // This means we are in the end of the tree
-            if tokens[0] == "" {
-                // We go to the get callee
-                self.callees.get(&method).or(self.default_callee.as_ref()).map(|v| Arc::clone(v))
-            } else {
-                // We are in the last branch
-                return self.branches.get(&tokens[0]).map(|v| {
-                    v._get_handler(vec!["".to_string()], method)
-                }).flatten().or(self.default_callee.as_ref().map(|v| Arc::clone(v)));
-            }
-        } else {
-            // We need to keep walking the tree
-            let mut token_iter = tokens.into_iter();
-            let id = token_iter.next().unwrap();
-            return self.branches.get(&id).map(|v| {
-                v._get_handler(token_iter.collect(), method)
-            }).flatten().or(self.default_callee.as_ref().map(|v| Arc::clone(v)));
-        }
-    }
-
-    /// Retrieves the handler and the layers from the tree
-    fn get_handler_and_layers(&self, tokens: Vec<String>, method: &Method) -> (Option<Arc<CoreFn>>, Vec<Arc<LayerFn>>) {
-        if tokens.len() == 1 {
-            // This means we are in the end of the tree
-            if tokens[0] == "" {
-                // We go to the get callee
-                (self.callees.get(&method).or(self.default_callee.as_ref()).map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect())
-            } else {
-                // We are in the last branch
-                // Option<(Option<CoreFn>, Vec<_>)>
-                return self.branches.get(&tokens[0]).map(|v| {
-                    v.get_handler_and_layers(vec!["".to_string()], method)
-                }).unwrap_or((self.default_callee.as_ref().map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect()));
-            }
-        } else {
-            // We need to keep walking the tree
-            let mut token_iter = tokens.into_iter();
-            let id = token_iter.next().unwrap();
-            return self.branches.get(&id).map(|v| {
-                v.get_handler_and_layers(token_iter.collect(), method)
-            }).unwrap_or((self.default_callee.as_ref().map(|v| Arc::clone(v)), self.layer_functions.iter().cloned().collect()));
-        }
-    }
-
-    /// Creates the pipeline of futures to be processed by the server
-    fn get_pipeline(&self, tokens: Vec<String>, method: &Method) -> Option<Pipeline> {
-        // We get the core handler, and the possible layers
-        let (core, layers) = self.get_handler_and_layers(tokens, method);
-
-        if let Some(core) = core {
-            let mut pipeline_layer = Pipeline::Core(Arc::clone(&core));
-            for function in &layers {
-                pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
-            }
-            // We return the nested pipeline
-            Some(pipeline_layer)
-        } else {
-            None
+            pure_branch: Arc::new(self.branch.purify())
         }
     }
 }
@@ -148,13 +41,13 @@ impl Tree {
 ///
 /// The Server structure hosts all the information to successfully process each call
 pub struct Server {
-    tree: Arc<Tree>
+    pure_branch: Arc<PureBranch>
 }
 
 impl Server {
     // Short for ServerBuilder's `new` function.
-    pub fn builder(path: Path) -> ServerBuilder {
-        ServerBuilder::new(path)
+    pub fn builder(branch: Branch) -> ServerBuilder {
+        ServerBuilder::new(branch)
     }
 
     pub async fn run<T: AsRef<str>>(&self, socket: T) -> Result<(), Error> {
@@ -188,13 +81,12 @@ impl Server {
         loop {
             // We need a fused future for the select macro
             let mut next_connection = Box::pin(listener.accept().fuse());
-            
             select! {
                 res = next_connection => match res {
                     Ok((socket, addr)) => {
-                        let tree_clone = self.tree.clone();
+                        let pure_branch_clone = self.pure_branch.clone();
                         tokio::spawn(async move {
-                            match Server::dispatch(socket, addr, tree_clone).await {
+                            match Server::dispatch(socket, addr, pure_branch_clone).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     error!("{}", e);
@@ -260,32 +152,15 @@ impl Server {
         }
     }
 
-    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, tree: Arc<Tree>) -> Result<(), Error> {
+    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, pure_branch: Arc<PureBranch>) -> Result<(), Error> {
         let request_bytes = Server::dispatch_read(&socket).await?;
 
         match Request::parse(request_bytes) {
             Ok(mut request) => {
                 request.addr = Some(addr);
-                let mut token_iter = request.path.split("/");
-                // We advance one to skip the whitespace before the root
-                let _ = token_iter.next();
-                let tokens = token_iter.map(|v| v.to_string()).collect::<Vec<_>>();
-                /*
-                let response = match tree.get_handler(tokens, &request.method) {
-                    Some(handler) => {
-                        /*
-                        type Middleware = Box<dyn Fn(&Request, std::vec::IntoIter<Middleware>) -> std::pin::Pin<Box<dyn futures::Future<Output = Response> + Send>> + Send + Sync>;
-                        let middlewares = vec![Box::new(|req: &Request, layers: std::vec::IntoIter<Middleware>| async {
-                            layers.next().unwrap()(req, layers).await
-                        })];
-                        */
-                        //middleware(&request)
-                        handler(request.clone()).await
-                    },
-                    None => Response::not_found()
-                };
-                */
-                let response = match tree.get_pipeline(tokens, &request.method) {
+                
+                // The method will take the request, and modify particularly the "variable count" variable
+                let response = match pure_branch.pipeline(&mut request) {
                     Some(pipeline) => {
                         match pipeline {
                             Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer),
