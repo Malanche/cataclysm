@@ -4,6 +4,7 @@ use chrono::Local;
 use colored::*;
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 
+/// To be removed
 pub struct SimpleLogger {
     default_level: LevelFilter,
     module_levels: Vec<(String, LevelFilter)>,

@@ -4,9 +4,7 @@
 
 Cataclysm is an http framework influenced by [actix-web](https://actix.rs/), and built over [tokio](https://tokio.rs/). A minimal working example is the following
 
-```Rust
-extern crate cataclysm;
-
+```rust
 use cataclysm::{Server, Branch, http::{Response, Method}};
 
 async fn hello() -> Response {
@@ -16,7 +14,7 @@ async fn hello() -> Response {
 #[tokio::main]
 async fn main() {
     let server = Server::builder(
-        Branch::new("/hello").with(Method::Get.to(hello))
+        Branch::<()>::new("/hello").with(Method::Get.to(hello))
     ).build();
 
     server.run("localhost:8000").await.unwrap();
@@ -27,14 +25,19 @@ async fn main() {
 
 Until `async closures` become stable, the option to pass closures as a path handler is with a closure that returns an async block
 
-```Rust
-let server = Server::builder(
-    Branch::new("/data").with(Method::Post.to(|data: Vec<u8>| async {
-        // Do something with data
-        // ...
-        Response::ok().body("worked!")
-    }))
-).build();
+```rust
+use cataclysm::{Server, Branch, http::{Response, Method}};
+
+#[tokio::main]
+async fn main() {
+    let server = Server::builder(
+        Branch::<()>::new("/data").with(Method::Post.to(|| async {
+            Response::ok().body("worked!")
+        }))
+    ).build();
+
+    server.run("localhost:8000").await.unwrap();
+}
 ```
 
 ## Extractors
@@ -45,25 +48,59 @@ Some data can be retrieved from an http request by just adding arguments to the 
 * `Vec<u8>`: Returns the content of the `http` call as a stream of bytes
 * `Request`: Returns the request for a bit more control within the callback
 * `Path<T>`: Returns the parameters from the path. T must be a tuple.
+* `Shared<T>`: Returns the shared data provided to the server (if any).
+
+## Sharing data to the functions from the server
+
+Data can be shared accross the server calls through the `share` method from the `ServerBuilder` structure, and with the help of the `Shared` structure.
+
+```rust
+use cataclysm::{Server, Branch, Shared, http::{Response, Method, Path}};
+
+// Receives a string, and concatenates the shared suffix
+async fn index(path: Path<(String,)>, shared: Shared<String>) -> Response {
+    let (prefix,) = path.into_inner();
+    let suffix = shared.into_inner();
+    Response::ok().body(format!("{}{}", prefix, suffix))
+}
+
+#[tokio::main]
+async fn main() {
+    // We create our tree structure
+    let branch = Branch::new("/{:value}").with(Method::Get.to(index));
+    // We create a server with the given tree structure
+    let server = Server::builder(branch).share("!!!".into()).build();
+    // And we launch it on the following address
+    server.run("127.0.0.1:8000").await.unwrap();
+}
+```
+
+If you want to share mutable data, then use rust's `Mutex` structure (as the `Shared` structure already provides an `Arc` wrapper).
 
 ## Layers
 
 Cataclysm allows for layer handling, a.k.a. middleware.
 
-```Rust
-let path = Branch::new("/hello")
-    .with(Method::Get.to(world))
-    .layer(|req: Request, pipeline: Box<Pipeline>| async {
-        // Example of timing layer / middleware
-        let now = std::time::Instant::now();
-        // Execute the deeper layers of the pipeline
-        let response = pipeline.execute(req).await;
-        // Measure and print time
-        let elapsed = now.elapsed().as_nanos();
-        info!("Process time: {} ns", elapsed);
-        // We return the request for further possible processing.
-        request
-}.boxed()).nested(Branch::new("/hola").with(Method::Delete.to(hello)));
+```rust
+use cataclysm::{Server, Branch, Additional, Pipeline, http::{Response, Request, Method}};
+use std::sync::Arc;
+use futures::future::FutureExt;
+
+#[tokio::main]
+async fn main() {
+    let branch = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}))
+        .layer(|req: Request, pipeline: Box<Pipeline<()>>, ad: Arc<Additional<()>>| async {
+            // Example of timing layer
+            println!("Time measuring begins");
+            let now = std::time::Instant::now();
+            let request = pipeline.execute(req, ad).await;
+            let elapsed = now.elapsed().as_nanos();
+            println!("Process time: {} ns", elapsed);
+            request
+        }.boxed());
+    let server = Server::builder(branch).build();
+    server.run("localhost:8000").await.unwrap();
+}
 ```
 
 As seen in the example, layer functions receive a `Request` and a boxed `Pipeline` enum. The `Pipeline` enum contains a nested structure of futures (the layers + the core handler), and has the `execute` to simplify things a bit. This function must return a `Pin<Box<_>>` future, so either use the `boxed` method from the `FutureExt` trait from the `futures` crate, or wrap it manually.

@@ -14,14 +14,14 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let server = Server::builder(
-//!         Branch::new("/").with(Method::Get.to(index))
+//!         Branch::<()>::new("/").with(Method::Get.to(index))
 //!     ).build();
 //! 
 //!     server.run("localhost:8000").await.unwrap();
 //! }
 //! ```
 
-use self::error::Error;
+pub use self::error::Error;
 mod error;
 pub use self::branch::{Branch};
 mod branch;
@@ -31,6 +31,10 @@ pub mod http;
 
 pub use self::server::{Server, ServerBuilder};
 mod server;
+pub use self::shared::{Shared};
+mod shared;
+pub use self::additional::Additional;
+mod additional;
 
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 mod metafunctions;

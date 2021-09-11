@@ -1,7 +1,9 @@
-use crate::{Extractor, Error, http::Request};
+use crate::{Extractor, Error, http::Request, additional::Additional};
 use std::collections::HashMap;
 use cookie::Cookie;
+use std::sync::Arc;
 
+/// To be implemented
 pub struct Session {
     values: HashMap<String, String>
 }
@@ -24,8 +26,8 @@ impl Session {
     }
 }
 
-impl Extractor for Session {
-    fn extract(req: &Request) -> Result<Self, Error> {
+impl<T: Sync> Extractor<T> for Session {
+    fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
         if let Some(cookie_string) = req.headers.get("Cookie") {
             let _cookie = match Cookie::parse(cookie_string) {
                 Ok(v) => v,

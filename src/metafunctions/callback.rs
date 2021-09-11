@@ -1,30 +1,30 @@
-use crate::{Extractor, http::{Response, Request}};
+use crate::{additional::Additional, http::{Response, Request}};
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
 use std::sync::Arc;
 
 /// Pipeline type, contains either a layer or the core of the pipeline
-pub enum Pipeline {
+pub enum Pipeline<T> {
     /// Processing layer
-    Layer(Arc<LayerFn>, Box<Pipeline>),
+    Layer(Arc<LayerFn<T>>, Box<Pipeline<T>>),
     /// Core layer
-    Core(Arc<CoreFn>)
+    Core(Arc<CoreFn<T>>)
 }
 
-impl Pipeline {
-    pub fn execute(self, s: Request) ->  Pin<Box<dyn Future<Output = Response> + Send>> {
+impl<T> Pipeline<T> {
+    pub fn execute(self, s: Request, a: Arc<Additional<T>>) ->  Pin<Box<dyn Future<Output = Response> + Send>> {
         match self {
-            Pipeline::Layer(func, pipeline_layer) => func(s, pipeline_layer),
-            Pipeline::Core(core_fn) => core_fn(s)
+            Pipeline::Layer(func, pipeline_layer) => func(s, pipeline_layer, a),
+            Pipeline::Core(core_fn) => core_fn(s, a)
         }.boxed()
     }
 }
 
 /// Type for the core handlers, that is, the ones that actually create a response
-pub type CoreFn = Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+pub type CoreFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 /// Type representing middleware functions
-pub type LayerFn = Box<dyn Fn(Request, Box<Pipeline>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+pub type LayerFn<T> = Box<dyn Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {
@@ -42,14 +42,14 @@ impl<F, R> Callback<()> for F where F: Fn() -> R + Sync, R: Future<Output = Resp
 /// This macro implements the trait for a given indexed tuple
 macro_rules! callback_for_many {
     ($struct_name:ident $index:tt) => {
-        impl<F, R, $struct_name> Callback<($struct_name,)> for F where F: Fn($struct_name) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static, $struct_name: Extractor {
+        impl<F, R, $struct_name> Callback<($struct_name,)> for F where F: Fn($struct_name) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static {
             fn invoke(&self, args: ($struct_name,)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self(args.$index).boxed()
             }
         }
     };
     ($($struct_name:ident $index:tt),+) => {
-        impl<F, R, $($struct_name),+> Callback<($($struct_name),+)> for F where F: Fn($($struct_name),+) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static, $($struct_name: Extractor),+ {
+        impl<F, R, $($struct_name),+> Callback<($($struct_name),+)> for F where F: Fn($($struct_name),+) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static {
             fn invoke(&self, args: ($($struct_name),+)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self($(args.$index,)+).boxed()
             }

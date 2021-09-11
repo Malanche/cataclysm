@@ -8,7 +8,7 @@ async fn index(path: Path<(String, i32)>) -> Response {
 #[tokio::main]
 async fn main() {
     // We create our tree structure
-    let branch = Branch::new("/{:username}/{:id}").with(Method::Get.to(index));
+    let branch: Branch<()> = Branch::new("/{:username}/{:id}").with(Method::Get.to(index));
     // We create a server with the given tree structure
     let server = Server::builder(branch).build();
     // And we launch it on the following address

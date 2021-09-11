@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use futures::future::FutureExt;
 use crate::{
+    additional::Additional,
     CoreFn, LayerFn, Extractor, Callback, Pipeline,
     http::{Method, Request, Response, MethodHandler}
 };
@@ -27,7 +28,7 @@ enum BranchKind {
 ///
 /// ```rust
 /// # use cataclysm::Branch;
-/// let branch = Branch::new("/hello/world");
+/// let branch: Branch<()> = Branch::new("/hello/world");
 /// ```
 ///
 /// Pattern matching is a bit more complex
@@ -35,7 +36,7 @@ enum BranchKind {
 /// ```rust
 /// # use cataclysm::Branch;
 /// // matches any route that starts with `/hello/` and then words of 3 or 4 letters, no numbers
-/// let branch = Branch::new("/hello/{regex:^[A-Za-z\\d]{3,4}$}");
+/// let branch: Branch<()> = Branch::new("/hello/{regex:^[A-Za-z\\d]{3,4}$}");
 /// ```
 ///
 /// Last but not least, we have variable detection, with no regex
@@ -43,28 +44,28 @@ enum BranchKind {
 /// ```rust
 /// # use cataclysm::Branch;
 /// // matches any route that contains "/hello/{:variable}"
-/// let branch = Branch::new("/hello/{:variable}");
+/// let branch: Branch<()> = Branch::new("/hello/{:variable}");
 /// ```
-pub struct Branch {
+pub struct Branch<T> {
     /// Exact match branches
-    exact_branches: HashMap<String, Branch>,
+    exact_branches: HashMap<String, Branch<T>>,
     /// Regex match branches
-    pattern_branches: Vec<(Regex, Branch)>,
+    pattern_branches: Vec<(Regex, Branch<T>)>,
     /// Variable branch, only one per branch
-    variable_branch: Option<(String, Box<Branch>)>,
+    variable_branch: Option<(String, Box<Branch<T>>)>,
     /// Original source that created the branch, to point to the top node
     source: String,
     /// Method Callbacks
-    method_callbacks: HashMap<Method, Arc<CoreFn>>,
+    method_callbacks: HashMap<Method, Arc<CoreFn<T>>>,
     /// Default method callback
-    default_method_callback: Option<Arc<CoreFn>>,
+    default_method_callback: Option<Arc<CoreFn<T>>>,
     /// Default callback for this node, and all the non-matching children
-    default_callback: Option<Arc<CoreFn>>,
+    default_callback: Option<Arc<CoreFn<T>>>,
     /// Layer functions on this branch
-    layers: Vec<Arc<LayerFn>>
+    layers: Vec<Arc<LayerFn<T>>>
 }
 
-impl std::fmt::Display for Branch {
+impl<T> std::fmt::Display for Branch<T> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         let mut content = String::new();
         for (branch_id, branch) in self.exact_branches.iter() {
@@ -92,14 +93,14 @@ impl std::fmt::Display for Branch {
     }
 }
 
-impl Branch {
+impl<T: Sync + Send> Branch<T> {
     /// Creates a new branch
     ///
     /// ```rust
     /// # use cataclysm::Branch;
-    /// let branch = Branch::new("/hello/world");
+    /// let branch: Branch<()> = Branch::new("/hello/world");
     /// ```
-    pub fn new<A: AsRef<str>>(trail: A) -> Branch {
+    pub fn new<A: AsRef<str>>(trail: A) -> Branch<T> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
         let mut branch = Branch {
@@ -125,7 +126,7 @@ impl Branch {
             }
         };
 
-        match Branch::clasify(&base) {
+        match Branch::<T>::clasify(&base) {
             BranchKind::Exact => {branch.exact_branches.insert(String::from(base), rest_branch);},
             BranchKind::Pattern => branch.pattern_branches.push((Regex::new(base.trim_start_matches("{regex:").trim_end_matches("}")).unwrap(), rest_branch)),
             BranchKind::Default => branch.variable_branch = Some((base.trim_start_matches("{:").trim_end_matches("}").to_string(), Box::new(rest_branch)))
@@ -147,9 +148,9 @@ impl Branch {
     /// }
     ///
     /// // Branch that will reply go a get method in `/scope`
-    /// let branch = Branch::new("/scope").with(Method::Get.to(index));
+    /// let branch: Branch<()> = Branch::new("/scope").with(Method::Get.to(index));
     /// ```
-    pub fn with(mut self, method_callback: MethodHandler) -> Self {
+    pub fn with(mut self, method_callback: MethodHandler<T>) -> Self {
         // We get the top node from the current branch
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
@@ -157,8 +158,55 @@ impl Branch {
         self
     }
 
+    /// Adds a default method responder, in case no specific handler is found for the requested method.
+    ///
+    /// By default, unmatched methods reply with a `405 Method Not Allowed`, but this function allows override of such behaviour.
+    ///
+    /// ```rust
+    /// # use cataclysm::{Branch, http::{Response, Method}};
+    /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {
+    ///     Response::ok().body("Supported!")
+    /// })).unmatched_method_to(|| async {
+    ///     Response::ok().body("Unsupported, please try with GET")
+    /// });
+    /// ```
+    pub fn unmatched_method_to<F: Callback<A> + Send + Sync + 'static, A: Extractor<T>>(mut self, callback: F) -> Self {
+        self.default_method_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
+            match <A as Extractor<T>>::extract(&req, additional) {
+                Ok(args) => callback.invoke(args).boxed(),
+                Err(e) => {
+                    log::trace!("{}", e);
+                    (async {Response::bad_request()}).boxed()
+                }
+            }
+        })));
+        self
+    }
+
+    /// Adds a default callback, in case of no nested matching.
+    ///
+    /// ```rust
+    /// # use cataclysm::{Branch, http::{Response}}; 
+    /// // This branch will reply in any of `/hello`, `/hello/world`, etc.
+    /// let branch: Branch<()> = Branch::new("/hello").defaults_to(|| async {
+    ///     Response::ok().body("Are you lost?")
+    /// });
+    /// ```
+    pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor<T>>(mut self, callback: F) -> Self {
+        self.default_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
+            match <A as Extractor<T>>::extract(&req, additional) {
+                Ok(args) => callback.invoke(args).boxed(),
+                Err(e) => {
+                    log::trace!("{}", e);
+                    (async {Response::bad_request()}).boxed()
+                }
+            }
+        })));
+        self
+    }
+
     /// Merges two paths, without taking control of the original path
-    fn merge_mut(&mut self, other: Branch) {
+    fn merge_mut(&mut self, other: Branch<T>) {
         let Branch{
             exact_branches,
             pattern_branches,
@@ -203,14 +251,14 @@ impl Branch {
     ///
     /// ```rust
     /// # use cataclysm::{Branch};
-    /// let branch_1 = Branch::new("/hello/world");
+    /// let branch_1: Branch<()> = Branch::new("/hello/world");
     /// let branch_2 = Branch::new("/hallo/welt");
     /// // Replies to both branches, in theory
     /// let merged_branch = branch_1.merge(branch_2);
     /// ```
     ///
     /// Please note that the caller has precedence over the callee, so in case of layers, the layers of the left hand side will have precedence, as well as the regex matches and the variable callback.
-    pub fn merge(mut self, other: Branch) -> Branch {
+    pub fn merge(mut self, other: Branch<T>) -> Branch<T> {
         self.merge_mut(other);
         self
     }
@@ -221,11 +269,11 @@ impl Branch {
     ///
     /// ```rust
     /// # use cataclysm::Branch;
-    /// let to_be_nested = Branch::new("/world");
+    /// let to_be_nested: Branch<()> = Branch::new("/world");
     /// // This one will reply in `/hello/world`
     /// let branch = Branch::new("/hello").nest(to_be_nested);
     /// ```
-    pub fn nest(mut self, other: Branch) -> Self {
+    pub fn nest(mut self, other: Branch<T>) -> Self {
         // We get the top node from the current branch
         let source = self.source.clone();
         // This unwrap looks risky, but I swear it is safe
@@ -234,71 +282,22 @@ impl Branch {
         self
     }
 
-    /// Adds a default method responder, in case no specific handler is found for the requested method.
-    ///
-    /// By default, unmatched methods reply with a `405 Method Not Allowed`, but this function allows override of such behaviour.
-    ///
-    /// ```rust
-    /// # use cataclysm::{Branch, http::{Response, Method}};
-    /// let branch = Branch::new("/").with(Method::Get.to(|| async {
-    ///     Response::ok().body("Supported!")
-    /// })).unmatched_method_to(|| async {
-    ///     Response::ok().body("Unsupported, please try with GET")
-    /// });
-    /// ```
-    pub fn unmatched_method_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, callback: F) -> Self {
-        self.default_method_callback = Some(Arc::new(Box::new(move |req: Request|  {
-            match <A as Extractor>::extract(&req) {
-                Ok(args) => callback.invoke(args).boxed(),
-                Err(e) => {
-                    log::trace!("{}", e);
-                    (async {Response::bad_request()}).boxed()
-                }
-            }
-            //callback.invoke(args).boxed()
-        })));
-        self
-    }
-
-    /// Adds a default callback, in case of no nested matching.
-    ///
-    /// ```rust
-    /// # use cataclysm::{Branch, http::{Response}}; 
-    /// // This branch will reply in any of `/hello`, `/hello/world`, etc.
-    /// let branch = Branch::new("/hello").defaults_to(|| async {
-    ///     Response::ok().body("Are you lost?")
-    /// });
-    /// ```
-    pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(mut self, callback: F) -> Self {
-        self.default_callback = Some(Arc::new(Box::new(move |req: Request|  {
-            //let args = <A as Extractor>::extract(&req);
-            //callback.invoke(args).boxed()
-            match <A as Extractor>::extract(&req) {
-                Ok(args) => callback.invoke(args).boxed(),
-                Err(e) => {
-                    log::trace!("{}", e);
-                    (async {Response::bad_request()}).boxed()
-                }
-            }
-        })));
-        self
-    }
-
     /// Adds a processing layer to the callbacks contained in this branch
     ///
     /// A layer is what is commonly known as middleware. The passed layer methods act as a wrap to the core handling functions of this branch. It is important to note that layer functions have a very specific structure: each one receives a [`Request`](crate::http::Request) and a boxed [`Pipeline`](crate::Pipeline). The function must return a pinned boxed future. A Timing Layer/Middleware function is provided as an example.
     ///
     /// ```
-    /// use cataclysm::{Branch, Pipeline, http::{Request, Response, Method}};
+    /// use cataclysm::{Branch, Additional, Pipeline, http::{Request, Response, Method}};
     /// use futures::future::FutureExt;
+    /// use std::sync::Arc;
     /// 
     /// let branch = Branch::new("/hello")
     ///     .with(Method::Get.to(|| async {Response::ok().body("¡Hola!")}))
-    ///     .layer(|req: Request, pipeline: Box<Pipeline>| async {
+    ///     .layer(|req: Request, pipeline: Box<Pipeline<()>>, ad: Arc<Additional<()>>| async {
     ///         // Example of timing layer / middleware
     ///         let now = std::time::Instant::now();
     ///         // Execute the deeper layers of the pipeline, passing the request
-    ///         let response = pipeline.execute(req).await;
+    ///         let response = pipeline.execute(req, ad).await;
     ///         // Measure and print time
     ///         let elapsed = now.elapsed().as_nanos();
     ///         println!("Process time: {} ns", elapsed);
@@ -309,7 +308,7 @@ impl Branch {
     /// ```
     ///
     /// Calling the function multiple times will wrap the preceeding layer (or core handlers), like an onion 🧅.
-    pub fn layer<F: Fn(Request, Box<Pipeline>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
+    pub fn layer<F: Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
         self.layers.push(Arc::new(Box::new(layer_fn)));
         self
     }
@@ -317,7 +316,7 @@ impl Branch {
     /// Turns the Branch into a PureBranch, basically getting rid of the "source" variable.
     ///
     /// Internal use only.
-    pub(crate) fn purify(self) -> PureBranch {
+    pub(crate) fn purify(self) -> PureBranch<T> {
         PureBranch {
             exact_branches: self.exact_branches.into_iter().map(|(base, bb)| (base, bb.purify())).collect(),
             pattern_branches: self.pattern_branches.into_iter().map(|(base, bb)| (base, bb.purify())).collect(),
@@ -332,7 +331,7 @@ impl Branch {
     /// Gives back a node of the tree, if found.
     ///
     /// Used during branch construction only.
-    fn get_branch<A: AsRef<str>>(&mut self, trail: A) -> Option<&mut Branch> {
+    fn get_branch<A: AsRef<str>>(&mut self, trail: A) -> Option<&mut Branch<T>> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
         let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
@@ -378,28 +377,28 @@ impl Branch {
 }
 
 /// Structure that holds information to process a callback properly
-struct CallbackInformation {
-    callback: Arc<CoreFn>,
-    layers: Vec<Arc<LayerFn>>,
+struct CallbackInformation<T> {
+    callback: Arc<CoreFn<T>>,
+    layers: Vec<Arc<LayerFn<T>>>,
     variable_indicators: Vec<bool>
 }
 
 /// Structure for internal use only.
 ///
 /// It is just a cleaner version of the Branch.
-pub(crate) struct PureBranch {
-    exact_branches: HashMap<String, PureBranch>,
-    pattern_branches: Vec<(Regex, PureBranch)>,
-    variable_branch: Option<(String, Box<PureBranch>)>,
-    method_callbacks: HashMap<Method, Arc<CoreFn>>,
-    default_method_callback: Option<Arc<CoreFn>>,
-    default_callback: Option<Arc<CoreFn>>,
-    layers: Vec<Arc<LayerFn>>
+pub(crate) struct PureBranch<T> {
+    exact_branches: HashMap<String, PureBranch<T>>,
+    pattern_branches: Vec<(Regex, PureBranch<T>)>,
+    variable_branch: Option<(String, Box<PureBranch<T>>)>,
+    method_callbacks: HashMap<Method, Arc<CoreFn<T>>>,
+    default_method_callback: Option<Arc<CoreFn<T>>>,
+    default_callback: Option<Arc<CoreFn<T>>>,
+    layers: Vec<Arc<LayerFn<T>>>
 }
 
-impl PureBranch {
+impl<T> PureBranch<T> {
     /// Creates the pipeline of futures to be processed by the server
-    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<Pipeline> {
+    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<Pipeline<T>> {
         // We get the core handler, and the possible layers
         if let Some(c_info) = self.callback_information(&request.path, &request.method) {
             // We have to update the variable locations
@@ -421,7 +420,7 @@ impl PureBranch {
     /// Gives back the callback information
     ///
     /// For internal use only
-    fn callback_information<A: AsRef<str>>(&self, trail: A, method: &Method) -> Option<CallbackInformation> {
+    fn callback_information<A: AsRef<str>>(&self, trail: A, method: &Method) -> Option<CallbackInformation<T>> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
 

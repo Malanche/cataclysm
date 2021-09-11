@@ -1,5 +1,6 @@
 use futures::future::FutureExt;
-use cataclysm::{Server, Branch, Pipeline, http::{Response, Request, Method}, SimpleLogger};
+use cataclysm::{Server, Branch, Additional, Pipeline, http::{Response, Request, Method}, SimpleLogger};
+use std::sync::Arc;
 
 async fn hello() -> Response {
     log::info!("hello callback called!");
@@ -19,11 +20,11 @@ async fn main() {
     let branch = Branch::new("/")
         .with(Method::Get.to(hello))
         .with(Method::Post.to(world))
-        .layer(|req: Request, pipeline: Box<Pipeline>| async {
+        .layer(|req: Request, pipeline: Box<Pipeline<()>>, ad: Arc<Additional<()>>| async {
             // Example of timing layer
             log::info!("Time measuring begins");
             let now = std::time::Instant::now();
-            let request = pipeline.execute(req).await;
+            let request = pipeline.execute(req, ad).await;
             let elapsed = now.elapsed().as_nanos();
             log::info!("Process time: {} ns", elapsed);
             request

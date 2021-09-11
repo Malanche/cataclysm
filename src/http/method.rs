@@ -1,7 +1,8 @@
 use futures::future::FutureExt;
 use std::future::Future;
 use std::pin::Pin;
-use crate::{Callback, Extractor, http::{Response, Request}};
+use std::sync::Arc;
+use crate::{Callback, additional::Additional, Extractor, http::{Response, Request}};
 
 /// Available methods for HTTP Requests
 #[derive(Clone, PartialEq, Hash)]
@@ -26,13 +27,11 @@ impl Eq for Method{}
 
 impl Method {
     /// Turns the Method into a MethodHandler, which is a short for a tuple Method - Handler
-    pub fn to<F: Callback<A> + Send + Sync + 'static, A: Extractor>(self, handler: F) -> MethodHandler {
+    pub fn to<T: Sync, F: Callback<A> + Send + Sync + 'static, A: Extractor<T>>(self, handler: F) -> MethodHandler<T> {
         MethodHandler{
             method: self,
-            handler: Box::new(move |req: Request|  {
-                //let args = <A as Extractor>::extract(&req);
-                //handler.invoke(args).boxed()
-                match <A as Extractor>::extract(&req) {
+            handler: Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
+                match <A as Extractor<T>>::extract(&req, additional) {
                     Ok(args) => handler.invoke(args).boxed(),
                     Err(e) => {
                         println!("{}", e);
@@ -69,7 +68,7 @@ impl Method {
     }
 }
 
-pub struct MethodHandler {
+pub struct MethodHandler<T = ()> {
     pub(crate) method: Method,
-    pub(crate) handler: Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>
+    pub(crate) handler: Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>
 }

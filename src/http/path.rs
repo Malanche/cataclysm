@@ -1,5 +1,6 @@
-use crate::{Extractor, Error, http::Request, branch::Tokenizable};
+use crate::{Extractor, Error, http::Request, branch::Tokenizable, additional::Additional};
 use std::str::FromStr;
+use std::sync::Arc;
 
 pub struct Path<T>(pub T);
 
@@ -11,16 +12,17 @@ impl<T> Path<T> {
 
 macro_rules! tuple_path {
     (($struct_name:ident, $struct_error:ident, $index:tt)) => {
-        impl<$struct_error: std::error::Error, $struct_name: 'static + FromStr<Err = $struct_error> + Send> Extractor for Path<($struct_name,)> {
-            fn extract(req: &Request) -> Result<Self, Error> {
-                let token = *req.path.tokenize().iter().nth(*req.variable_indices.get(0).ok_or_else(|| Error::ExtractionSE(format!("Not enough elements")))?).ok_or_else(|| Error::ExtractionSE(format!("Not enough elements")))?;
+        impl<$struct_error: std::error::Error, $struct_name: 'static + FromStr<Err = $struct_error> + Send, T: Sync> Extractor<T> for Path<($struct_name,)> {
+            fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
+                let trimmed_trail = req.path.trim_start_matches("/");
+                let token = *trimmed_trail.tokenize().iter().nth(*req.variable_indices.get(0).ok_or_else(|| Error::ExtractionSE(format!("Not enough elements")))?).ok_or_else(|| Error::ExtractionSE(format!("Not enough elements")))?;
                 Ok(Path(($struct_name::from_str(token).map_err(|e| Error::ExtractionBR(format!("{}", e)))?, )))
             }
         }
     };
     ($(($struct_name:ident, $struct_error:ident, $index:tt)),+) => {
-        impl<$($struct_error: std::error::Error, $struct_name: 'static + FromStr<Err = $struct_error> + Send),+> Extractor for Path<($($struct_name),+)> {
-            fn extract(req: &Request) -> Result<Self, Error> {
+        impl<$($struct_error: std::error::Error, $struct_name: 'static + FromStr<Err = $struct_error> + Send),+, T: Sync> Extractor<T> for Path<($($struct_name),+)> {
+            fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
                 let trimmed_trail = req.path.trim_start_matches("/");
                 let tokens = trimmed_trail.tokenize();
 

@@ -1,3 +1,4 @@
+/// Errors returned by this library
 #[derive(Debug)]
 pub enum Error {
     /// Standard io error
