@@ -12,13 +12,16 @@ impl Into<Response> for (u32, &'static str) {
         Response {
             protocol: "HTTP/1.1".into(),
             status: self,
-            headers: vec![("content-type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
+            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
             content: Vec::new()
         }
     }
 }
 
 impl Response {
+    /// Informational
+    const CONTINUE: (u32, &'static str) = (100, "Continue");
+
     // Successful responses
     const OK: (u32, &'static str) = (200, "OK");
     const CREATED: (u32, &'static str) = (201, "Created");
@@ -43,6 +46,8 @@ impl Response {
     const BAD_GATEWAY: (u32, &'static str) = (502, "Bad Gateway");
     const SERVICE_UNAVAILABLE: (u32, &'static str) = (503, "Service Unavailable");
 
+    pub fn r#continue() -> Response{ Response::CONTINUE.into() }
+
     pub fn ok() -> Response { Response::OK.into() }
     pub fn created() -> Response { Response::CREATED.into() }
     pub fn accepted() -> Response { Response::ACCEPTED.into() }
@@ -66,13 +71,13 @@ impl Response {
         Response {
             protocol: "HTTP/1.1".into(),
             status: Response::OK,
-            headers: vec![("content-type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
+            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
             content: Vec::new()
         }
     }
 
-    pub fn header(mut self, key: String, value: String) -> Response {
-        self.headers.insert(key, value);
+    pub fn header<A: Into<String>, B: Into<String>>(mut self, key: A, value: B) -> Response {
+        self.headers.insert(key.into(), value.into());
         self
     }
 

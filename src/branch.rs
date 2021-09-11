@@ -9,6 +9,9 @@ use crate::{
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::PathBuf;
 
 enum BranchKind {
     Exact,
@@ -61,6 +64,8 @@ pub struct Branch<T> {
     default_method_callback: Option<Arc<CoreFn<T>>>,
     /// Default callback for this node, and all the non-matching children
     default_callback: Option<Arc<CoreFn<T>>>,
+    /// File callback, in case this endpoint wants to be used for static file serving
+    files_callback: Option<Arc<CoreFn<T>>>,
     /// Layer functions on this branch
     layers: Vec<Arc<LayerFn<T>>>
 }
@@ -76,7 +81,7 @@ impl<T> std::fmt::Display for Branch<T> {
             }
         }
         for (pattern, branch) in self.pattern_branches.iter() {
-            content += &format!("\n--> regex: {}", pattern.as_str());
+            content += &format!("\n--> :regex {}", pattern.as_str());
             let remaining_content = format!("{}", branch);
             if !remaining_content.is_empty() {
                 content += &format!("\n{}", remaining_content).replace("-->", "---->");
@@ -111,6 +116,7 @@ impl<T: Sync + Send> Branch<T> {
             method_callbacks: HashMap::new(),
             default_method_callback: None,
             default_callback: None,
+            files_callback: None,
             layers: vec![]
         };
         let (base, rest_branch) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
@@ -171,7 +177,9 @@ impl<T: Sync + Send> Branch<T> {
     /// });
     /// ```
     pub fn unmatched_method_to<F: Callback<A> + Send + Sync + 'static, A: Extractor<T>>(mut self, callback: F) -> Self {
-        self.default_method_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.default_method_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(e) => {
@@ -187,13 +195,15 @@ impl<T: Sync + Send> Branch<T> {
     ///
     /// ```rust
     /// # use cataclysm::{Branch, http::{Response}}; 
-    /// // This branch will reply in any of `/hello`, `/hello/world`, etc.
+    /// // This branch will reply in any of `/hello`, `/hello/world`, `/hello/a/b` ,etc.
     /// let branch: Branch<()> = Branch::new("/hello").defaults_to(|| async {
     ///     Response::ok().body("Are you lost?")
     /// });
     /// ```
     pub fn defaults_to<F: Callback<A> + Send + Sync + 'static, A: Extractor<T>>(mut self, callback: F) -> Self {
-        self.default_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.default_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(e) => {
@@ -205,7 +215,93 @@ impl<T: Sync + Send> Branch<T> {
         self
     }
 
+    /// Allows static file serving.
+    ///
+    /// ```rust
+    /// # use cataclysm::{Branch, http::{Response}}; 
+    /// // This branch will reply with the default function to any
+    /// // path that has no extension. If it has extension, static files
+    /// // are served from ./static
+    /// let branch: Branch<()> = Branch::new("/").defaults_to(|| async {
+    ///     Response::ok().body("Is this an SPA?")
+    /// }).files("./static");
+    /// ```
+    pub fn files<A: Into<PathBuf>>(mut self, files_location: A) -> Self {
+        let fl = files_location.into();
+        // For some odd reason, the compiler didn't guess this closure properly. So we help it :)
+        let close: Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<(dyn futures::Future<Output = Response> + Send + 'static)>> + Sync + Send> = Box::new(move |req: Request, _additional: Arc<Additional<T>>|  {
+            let mut fl_clone = fl.clone();
+            (async move {
+                let trimmed_trail = req.path.trim_start_matches("/");
+                let tokens = trimmed_trail.tokenize();
+                let path: PathBuf = tokens.iter().skip(req.depth).collect();
+                fl_clone.push(path);
+                let extension = match fl_clone.extension().map(|e| e.to_str()).flatten() {
+                    Some(e) => e,
+                    None => return Response::internal_server_error()
+                };
+                match File::open(&fl_clone) {
+                    Ok(mut f) =>  {
+                        let mut content = Vec::new();
+                        match f.read_to_end(&mut content) {
+                            Ok(_) => (),
+                            Err(_) => return Response::internal_server_error()
+                        }
+                        Response::ok().body(content).header("Content-Type", crate::http::MIME_TYPES.get(extension).map(|v| *v).unwrap_or("application/octet-stream"))
+                    },
+                    Err(_) => Response::not_found()
+                }
+            }).boxed()
+        });
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.files_callback = Some(Arc::new(close));
+        self
+    }
+
+    /// Helper for creating a file-loader default endpoint, for one specific file.
+    ///
+    /// This is useful for single page applications.
+    ///
+    /// ```rust
+    /// # use cataclysm::{Branch, http::{Response}}; 
+    /// // This is an SPA.
+    /// let branch: Branch<()> = Branch::new("/")
+    ///     .defaults_to_file("./static/index.html")
+    ///     .files("./static");
+    /// ```
+    pub fn defaults_to_file<A: Into<PathBuf>>(mut self, file_location: A) -> Self {
+        let fl = file_location.into();
+        // For some odd reason, the compiler didn't guess this closure properly. So we help it :)
+        let close: Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<(dyn futures::Future<Output = Response> + Send + 'static)>> + Sync + Send> = Box::new(move |_req: Request, _additional: Arc<Additional<T>>|  {
+            let fl_clone = fl.clone();
+            (async move {
+                let extension = match fl_clone.extension().map(|e| e.to_str()).flatten() {
+                    Some(e) => e,
+                    None => return Response::internal_server_error()
+                };
+                match File::open(&fl_clone) {
+                    Ok(mut f) =>  {
+                        let mut content = Vec::new();
+                        match f.read_to_end(&mut content) {
+                            Ok(_) => (),
+                            Err(_) => return Response::internal_server_error()
+                        }
+                        Response::ok().body(content).header("Content-Type", crate::http::MIME_TYPES.get(extension).map(|s| *s).unwrap_or("application/octet-stream"))
+                    },
+                    Err(_) => Response::not_found()
+                }
+            }).boxed()
+        });
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.default_callback = Some(Arc::new(close));
+        self
+    }
+
     /// Merges two paths, without taking control of the original path
+    ///
+    /// All priority is set to the caller
     fn merge_mut(&mut self, other: Branch<T>) {
         let Branch{
             exact_branches,
@@ -213,8 +309,11 @@ impl<T: Sync + Send> Branch<T> {
             variable_branch,
             method_callbacks,
             default_method_callback,
-            default_callback, ..
+            default_callback,
+            files_callback,
+            ..
         } = other;
+        // If an exact match is found, we merge
         for (base, branch) in exact_branches.into_iter() {
             if let Some(eb) = self.exact_branches.get_mut(&base) {
                 eb.merge_mut(branch);
@@ -222,42 +321,71 @@ impl<T: Sync + Send> Branch<T> {
                 self.exact_branches.insert(base, branch);
             }
         }
-        // Priority to the self branch
-        for (pattern, branch) in pattern_branches.into_iter() {
-            self.pattern_branches.push((pattern, branch));
+
+        // Priority to the lhs branch
+        let mut additional_pattern_branches = Vec::new();
+        for (rhs_pattern, rhs_branch) in pattern_branches.into_iter() {
+            let mut remaining_rhs_branch = Some(rhs_branch);
+            for (lhs_pattern, lhs_branch) in self.pattern_branches.iter_mut() {
+                if lhs_pattern.as_str() == rhs_pattern.as_str() {
+                    // Then we merge them
+                    lhs_branch.merge_mut(remaining_rhs_branch.take().unwrap());
+                    break;
+                }
+            }
+            if let Some(rhs_branch) = remaining_rhs_branch {
+                additional_pattern_branches.push((rhs_pattern, rhs_branch));
+            }
         }
+        self.pattern_branches.extend(additional_pattern_branches);
+
         // Priority to the other branch
-        if variable_branch.is_some() {
+        if self.variable_branch.is_none() {
             self.variable_branch = variable_branch;
         }
 
+        //** Now the callbacks in this node **//
+
         // We add the method callbacks, priority to the other node
         for (method, callback) in method_callbacks.into_iter() {
-            self.method_callbacks.insert(method, callback);
+            self.method_callbacks.entry(method).or_insert(callback);
         }
 
-        // Priority for the other branch
-        if default_method_callback.is_some() {
+        // Priority for the lhs branch
+        if self.default_method_callback.is_none() {
             self.default_method_callback = default_method_callback;
         }
 
-        // Priority for the other branch
-        if default_callback.is_some() {
+        // Priority for the lhs branch
+        if self.default_callback.is_none() {
             self.default_callback = default_callback;
+        }
+
+        // Priority for the lhs branch
+        if self.files_callback.is_none() {
+            self.files_callback = files_callback;
         }
     }
 
     /// Merges two branches from their bases, in case you find it useful
     ///
     /// ```rust
-    /// # use cataclysm::{Branch};
-    /// let branch_1: Branch<()> = Branch::new("/hello/world");
-    /// let branch_2 = Branch::new("/hallo/welt");
-    /// // Replies to both branches, in theory
+    /// # use cataclysm::{Branch, http::{Method, Response}};
+    /// let branch_1: Branch<()> = Branch::new("/hello/world")
+    ///     .with(Method::Get.to(|| async {Response::ok()}));
+    /// let branch_2 = Branch::new("/hallo/welt")
+    ///     .with(Method::Get.to(|| async {Response::unauthorized()}));
+    /// // Merged branch will reply in `/hello/world` and in `/hallo/welt`
     /// let merged_branch = branch_1.merge(branch_2);
     /// ```
     ///
-    /// Please note that the caller has precedence over the callee, so in case of layers, the layers of the left hand side will have precedence, as well as the regex matches and the variable callback.
+    /// Importance is held by the caller branch (`lhs`). That means that the following will hold true:
+    ///
+    /// * Method callbacks from `rhs` are only merged if not already present in `lhs`.
+    /// * Exact matches from `rhs` will be merged if already found in `lhs`, else they get inserted.
+    /// * Pattern matches from `rhs` will be marged if matched literally to another regex, else they will be inserted at the end of the evaluation queue.
+    /// * Variable match from `rhs` is ignored if `lhs` already contains one.
+    /// * Static file serving from `rhs` is ignored if `lhs` already contains one.
     pub fn merge(mut self, other: Branch<T>) -> Branch<T> {
         self.merge_mut(other);
         self
@@ -309,13 +437,15 @@ impl<T: Sync + Send> Branch<T> {
     ///
     /// Calling the function multiple times will wrap the preceeding layer (or core handlers), like an onion 🧅.
     pub fn layer<F: Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
-        self.layers.push(Arc::new(Box::new(layer_fn)));
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.layers.push(Arc::new(Box::new(layer_fn)));
         self
     }
 
-    /// Turns the Branch into a PureBranch, basically getting rid of the "source" variable.
+    /// Turns the Branch into a PureBranch, basically getting rid of the "source" variable, and creating some callbacks.
     ///
-    /// Internal use only.
+    /// Internal use only. It helps because the tree structure won't change after this.
     pub(crate) fn purify(self) -> PureBranch<T> {
         PureBranch {
             exact_branches: self.exact_branches.into_iter().map(|(base, bb)| (base, bb.purify())).collect(),
@@ -324,6 +454,7 @@ impl<T: Sync + Send> Branch<T> {
             method_callbacks: self.method_callbacks,
             default_method_callback: self.default_method_callback,
             default_callback: self.default_callback,
+            files_callback: self.files_callback,
             layers: self.layers
         }
     }
@@ -393,6 +524,7 @@ pub(crate) struct PureBranch<T> {
     method_callbacks: HashMap<Method, Arc<CoreFn<T>>>,
     default_method_callback: Option<Arc<CoreFn<T>>>,
     default_callback: Option<Arc<CoreFn<T>>>,
+    files_callback: Option<Arc<CoreFn<T>>>,
     layers: Vec<Arc<LayerFn<T>>>
 }
 
@@ -402,6 +534,8 @@ impl<T> PureBranch<T> {
         // We get the core handler, and the possible layers
         if let Some(c_info) = self.callback_information(&request.path, &request.method) {
             // We have to update the variable locations
+            request.depth = c_info.variable_indicators.len();
+
             request.variable_indices = c_info.variable_indicators
                 .iter().rev().enumerate().filter(|(_idx, v)| **v)
                 .map(|(idx, _v)| idx).collect();
@@ -423,7 +557,7 @@ impl<T> PureBranch<T> {
     fn callback_information<A: AsRef<str>>(&self, trail: A, method: &Method) -> Option<CallbackInformation<T>> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
-
+        
         let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
             (base.to_string(), rest.to_string())
         } else {
@@ -481,12 +615,26 @@ impl<T> PureBranch<T> {
                 c_info.variable_indicators.push(is_var);
             },
             None => {
-                if let Some(dc) = &self.default_callback {
-                    result = Some(CallbackInformation {
-                        callback: Arc::clone(dc),
-                        layers: self.layers.clone(),
-                        variable_indicators: vec![]
-                    });
+                // Now, there was not match at all. First, we verify if the path is a file
+                if std::path::Path::new(trimmed_trail).extension().is_some() {
+                    if let Some(fc) = &self.files_callback {
+                        result = Some(CallbackInformation {
+                            callback: Arc::clone(fc),
+                            layers: self.layers.clone(),
+                            variable_indicators: vec![]
+                        });
+                    }
+                }
+
+                // Last, if there is a default callback, we call it.
+                if result.is_none() {
+                    if let Some(dc) = &self.default_callback {
+                        result = Some(CallbackInformation {
+                            callback: Arc::clone(dc),
+                            layers: self.layers.clone(),
+                            variable_indicators: vec![]
+                        });
+                    }
                 }
             }
         }

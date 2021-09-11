@@ -7,8 +7,10 @@ pub struct Request {
     pub(crate) method: Method,
     /// Route that the user requested
     pub(crate) path: String,
-    /// Variable positions, if any (this is used by the Path structure)
+    /// Variable positions, if any (set by the pure branch)
     pub(crate) variable_indices: Vec<usize>,
+    /// How deep in the tree this endpoint finds itself (set by the pure branch)
+    pub(crate) depth: usize,
     /// headers from the request
     pub headers: HashMap<String, String>,
     /// Address from the request
@@ -56,6 +58,7 @@ impl Request {
             method,
             path,
             variable_indices: vec![],
+            depth: 0,
             headers,
             addr: None,
             content

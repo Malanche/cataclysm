@@ -77,6 +77,26 @@ async fn main() {
 
 If you want to share mutable data, then use rust's `Mutex` structure (as the `Shared` structure already provides an `Arc` wrapper).
 
+## SPA, and static file serving
+
+The branch structure has both the `file` method and the `defaults_to_file` to create a simple SPA server, one allows all paths that contain an extention to be looked for in the provided folder path, and the other to serve a file as specified by the provided path in any other match that has no extension, respectively.
+
+```rust
+use cataclysm::{Server, Branch, http::{Response, Method}};
+
+async fn salute() -> Response {
+    Response::ok().body("api salute endpoint?")
+}
+
+#[tokio::main]
+async fn main() {
+    let branch: Branch<()> = Branch::new("/").files("./static").defaults_to_file("./static/index.html")
+        .nest(Branch::new("/api/v1/salute").with(Method::Get.to(salute)));
+    let server = Server::builder(branch).build().unwrap();
+    server.run("127.0.0.1:8000").await.unwrap();
+}
+```
+
 ## Layers
 
 Cataclysm allows for layer handling, a.k.a. middleware.
