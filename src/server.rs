@@ -35,7 +35,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
         }
     }
 
-    /// Declare a information to be shared with the [Shared](crate::Shared) extractor
+    /// Declare some information to be shared with the [Shared](crate::Shared) extractor
     ///
     /// ```rust,no_run
     /// use cataclysm::{Server, Branch, Shared, http::{Response, Method, Path}};
