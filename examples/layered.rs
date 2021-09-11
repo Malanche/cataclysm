@@ -32,7 +32,7 @@ async fn main() {
 
     let server = Server::builder(
         branch
-    ).build();
+    ).build().unwrap();
 
     server.run("127.0.0.1:8000").await.unwrap();
 }

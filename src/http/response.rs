@@ -3,7 +3,7 @@ use std::collections::HashMap;
 pub struct Response {
     protocol: String,
     pub(crate) status: (u32, &'static str),
-    headers: HashMap<String, String>,
+    pub(crate) headers: HashMap<String, String>,
     pub content: Vec<u8>
 }
 

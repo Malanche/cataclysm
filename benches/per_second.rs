@@ -13,11 +13,11 @@ fn bench(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let handle = rt.handle();
     handle.spawn(async {
-        let path = Branch::new("/").with(Method::Get.to(index));
+        let path: Branch<()> = Branch::new("/").with(Method::Get.to(index));
         
         let server = Server::builder(
             path
-        ).build();
+        ).build().unwrap();
         
         server.run("127.0.0.1:8000").await.unwrap();
     });

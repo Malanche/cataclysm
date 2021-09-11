@@ -15,7 +15,7 @@ async fn hello() -> Response {
 async fn main() {
     let server = Server::builder(
         Branch::<()>::new("/hello").with(Method::Get.to(hello))
-    ).build();
+    ).build().unwrap();
 
     server.run("localhost:8000").await.unwrap();
 }
@@ -34,7 +34,7 @@ async fn main() {
         Branch::<()>::new("/data").with(Method::Post.to(|| async {
             Response::ok().body("worked!")
         }))
-    ).build();
+    ).build().unwrap();
 
     server.run("localhost:8000").await.unwrap();
 }
@@ -69,7 +69,7 @@ async fn main() {
     // We create our tree structure
     let branch = Branch::new("/{:value}").with(Method::Get.to(index));
     // We create a server with the given tree structure
-    let server = Server::builder(branch).share("!!!".into()).build();
+    let server = Server::builder(branch).share("!!!".into()).build().unwrap();
     // And we launch it on the following address
     server.run("127.0.0.1:8000").await.unwrap();
 }
@@ -98,7 +98,7 @@ async fn main() {
             println!("Process time: {} ns", elapsed);
             request
         }.boxed());
-    let server = Server::builder(branch).build();
+    let server = Server::builder(branch).build().unwrap();
     server.run("localhost:8000").await.unwrap();
 }
 ```

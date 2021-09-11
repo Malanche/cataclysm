@@ -15,7 +15,7 @@
 //! async fn main() {
 //!     let server = Server::builder(
 //!         Branch::<()>::new("/").with(Method::Get.to(index))
-//!     ).build();
+//!     ).build().unwrap();
 //! 
 //!     server.run("localhost:8000").await.unwrap();
 //! }

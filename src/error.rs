@@ -9,6 +9,8 @@ pub enum Error {
     ExtractionBR(String),
     /// Could not extract parameter from request. Indicating a bad server error.
     ExtractionSE(String),
+    /// Indicates a Ring error
+    Ring,
     Dummy
 }
 
@@ -19,6 +21,7 @@ impl std::fmt::Display for Error {
             Error::Parse(detail) => format!("parse error: {}", detail),
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
+            Error::Ring => format!("ring error"),
             Error::Dummy => format!("Dummy error")
         };
         write!(formatter, "{}", content)
