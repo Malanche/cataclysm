@@ -1,10 +1,8 @@
-//! Logger to be removed, based on Borntyping's Simple Logger <https://github.com/borntyping/rust-simple_logger>
-
+//! Logger for examples, based on Borntyping's Simple Logger <https://github.com/borntyping/rust-simple_logger>
 use chrono::Local;
 use colored::*;
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 
-/// To be removed
 pub struct SimpleLogger {
     default_level: LevelFilter,
     module_levels: Vec<(String, LevelFilter)>,
@@ -18,26 +16,13 @@ impl SimpleLogger {
         }
     }
 
-    pub fn from_env() -> SimpleLogger {
-        let level = match std::env::var("RUST_LOG") {
-            Ok(x) => match x.to_lowercase().as_str() {
-                "trace" => log::LevelFilter::Trace,
-                "debug" => log::LevelFilter::Debug,
-                "info" => log::LevelFilter::Info,
-                "warn" => log::LevelFilter::Warn,
-                _ => log::LevelFilter::Error,
-            },
-            _ => log::LevelFilter::Error,
-        };
-
-        SimpleLogger::new().with_level(level)
-    }
-
+    #[allow(dead_code)]
     pub fn with_level(mut self, level: LevelFilter) -> SimpleLogger {
         self.default_level = level;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_module_level(mut self, target: &str, level: LevelFilter) -> SimpleLogger {
         self.module_levels.push((target.to_string(), level));
 
@@ -95,16 +80,25 @@ impl Log for SimpleLogger {
                     Level::Trace => record.level().to_string().normal(),
                 }
             };
+            /*
             let target = if !record.target().is_empty() {
                 record.target()
             } else {
                 record.module_path().unwrap_or_default()
             };
+            
             println!(
                 "{} {:<5} [{}] {}",
                 Local::now().format("%Y-%m-%d %H:%M:%S,%3f"),
                 level_string,
                 target,
+                record.args()
+            );
+            */
+            println!(
+                "{} [{:<5}]: {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S,%3f"),
+                level_string,
                 record.args()
             );
         }

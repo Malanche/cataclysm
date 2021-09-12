@@ -1,5 +1,8 @@
 use cataclysm::{Server, Branch, Session, http::{Response, Method, Path}};
 
+use misc::SimpleLogger;
+mod misc;
+
 async fn index(session: Session) -> Response {
     match session.get("username") {
         Some(username) => {
@@ -17,6 +20,7 @@ async fn login(path: Path<(String,)>, mut session: Session) -> Response {
 
 #[tokio::main]
 async fn main() {
+    SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     // We create our tree structure
     let branch: Branch<()> = Branch::new("/").with(Method::Get.to(index))
         .merge(Branch::new("/login/{:username}").with(Method::Get.to(login)));

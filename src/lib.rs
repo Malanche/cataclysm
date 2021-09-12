@@ -39,9 +39,6 @@ mod additional;
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 mod metafunctions;
 
-pub use self::logger::SimpleLogger;
-mod logger;
-
 pub use self::session::Session;
 mod session;
 

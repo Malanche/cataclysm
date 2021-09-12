@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 lazy_static::lazy_static! {
-    /// This is an example for using doc comment attributes
+    /// Contains the common mime types per extension
     pub static ref MIME_TYPES: HashMap<&'static str, &'static str> = read_csv();
 }
 

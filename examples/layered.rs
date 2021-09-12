@@ -1,15 +1,13 @@
 use futures::future::FutureExt;
-use cataclysm::{Server, Branch, Additional, Pipeline, http::{Response, Request, Method}, SimpleLogger};
+use cataclysm::{Server, Branch, Additional, Pipeline, http::{Response, Request, Method}};
 use std::sync::Arc;
 
-async fn hello() -> Response {
+use misc::SimpleLogger;
+mod misc;
+
+async fn index() -> Response {
     log::info!("hello callback called!");
     Response::ok().body("hello")
-}
-
-async fn world() -> Response {
-    log::info!("world callback called!");
-    Response::ok().body("world!")
 }
 
 // #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
@@ -18,8 +16,7 @@ async fn main() {
     SimpleLogger::new().with_level(log::LevelFilter::Info).init().unwrap();
     
     let branch = Branch::new("/")
-        .with(Method::Get.to(hello))
-        .with(Method::Post.to(world))
+        .with(Method::Get.to(index))
         .layer(|req: Request, pipeline: Box<Pipeline<()>>, ad: Arc<Additional<()>>| async {
             // Example of timing layer
             log::info!("Time measuring begins");

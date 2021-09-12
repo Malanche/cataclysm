@@ -15,7 +15,8 @@ use ring::{hmac::{self, Key}, rand};
 pub struct ServerBuilder<T> {
     branch: Branch<T>,
     shared: Option<Shared<T>>,
-    secret: Option<Key>
+    secret: Option<Key>,
+    log_string: Option<String>
 }
 
 impl<T: Sync + Send> ServerBuilder<T> {
@@ -31,7 +32,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
         ServerBuilder {
             branch,
             shared: None,
-            secret: None
+            secret: None,
+            log_string: None
         }
     }
 
@@ -93,6 +95,28 @@ impl<T: Sync + Send> ServerBuilder<T> {
         self
     }
 
+    /// Sets a log string, to log information per call
+    ///
+    /// ```rust,no_run
+    /// # use cataclysm::{Server, Session, Branch, Shared, http::{Response, Method, Path}};
+    /// // Tree structure
+    /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
+    /// // Now we configure the server
+    /// let server = Server::builder(branch).log_format("[%M %P] %S, from %A").build().unwrap();
+    /// ```
+    ///
+    /// The list of available format elements are the following
+    /// 
+    /// * `%M`: Method from the request
+    /// * `%P`: Path from the request
+    /// * `%S`: Status from the response
+    /// * `%A`: Socket address and port from the connection
+    /// (more data to be added soon)
+    pub fn log_format<A: Into<String>>(mut self, log_string: A) -> Self {
+        self.log_string = Some(log_string.into());
+        self
+    }
+
     /// Builds the server
     ///
     /// ```rust,no_run
@@ -120,7 +144,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
             additional: Arc::new(Additional {
                 shared: self.shared,
                 secret: Arc::new(Key::generate(hmac::HMAC_SHA256, &rng).map_err(|_| Error::Ring)?)
-            })
+            }),
+            log_string: Arc::new(self.log_string)
         })
     }
 }
@@ -130,7 +155,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
 /// The Server structure hosts all the information to successfully process each call
 pub struct Server<T> {
     pure_branch: Arc<PureBranch<T>>,
-    additional: Arc<Additional<T>>
+    additional: Arc<Additional<T>>,
+    log_string: Arc<Option<String>>
 }
 
 impl<T: 'static + Sync + Send> Server<T> {
@@ -167,6 +193,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             }
         }).unwrap();
 
+        info!("Cataclysm ongoing \u{26c8}");
         loop {
             // We need a fused future for the select macro
             let mut next_connection = Box::pin(listener.accept().fuse());
@@ -175,8 +202,9 @@ impl<T: 'static + Sync + Send> Server<T> {
                     Ok((socket, addr)) => {
                         let pure_branch_clone = self.pure_branch.clone();
                         let additional = self.additional.clone();
+                        let log_string = self.log_string.clone();
                         tokio::spawn(async move {
-                            match Server::<T>::dispatch(socket, addr, additional, pure_branch_clone).await {
+                            match Server::<T>::dispatch(socket, addr, additional, log_string, pure_branch_clone).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     error!("{}", e);
@@ -242,7 +270,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
     }
 
-    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, additional: Arc<Additional<T>>, pure_branch: Arc<PureBranch<T>>) -> Result<(), Error> {
+    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, additional: Arc<Additional<T>>, log_string: Arc<Option<String>>, pure_branch: Arc<PureBranch<T>>) -> Result<(), Error> {
         let mut request_bytes = Vec::new();
         let mut second_part = false;
         let mut request = loop {
@@ -277,7 +305,10 @@ impl<T: 'static + Sync + Send> Server<T> {
             },
             None => Response::not_found()
         };
-        info!("[{} {}] {} from {}", request.method.to_str(), request.path, response.status.0, addr);
+        if let Some(log_string) = &*log_string {
+            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+            //info!("[{} {}] {} from {}", request.method.to_str(), request.path, response.status.0, addr);
+        }
         Server::<T>::dispatch_write(&socket, response).await?;
         //socket.shutdown();
         Ok(())

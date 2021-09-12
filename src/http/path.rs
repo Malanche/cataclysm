@@ -2,9 +2,13 @@ use crate::{Extractor, Error, http::Request, branch::Tokenizable, additional::Ad
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// Token extractor from the path from a request
+///
+/// The `Path` extractors allows for tuple extraction from a path with variable or regex components.
 pub struct Path<T>(pub T);
 
 impl<T> Path<T> {
+    /// Retrieves the inner instance of the generic type
     pub fn into_inner(self) -> T {
         self.0
     }

@@ -160,7 +160,11 @@ impl<T: Sync + Send> Branch<T> {
         // We get the top node from the current branch
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
-        top_branch.method_callbacks.insert(method_callback.method, Arc::new(method_callback.handler));
+        let handler = Arc::new(method_callback.handler);
+        for method in method_callback.methods {
+            top_branch.method_callbacks.insert(method, handler.clone());
+        }
+        //top_branch.method_callbacks.insert(method_callback.method, Arc::new(method_callback.handler));
         self
     }
 
