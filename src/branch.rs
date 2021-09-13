@@ -187,7 +187,7 @@ impl<T: Sync + Send> Branch<T> {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(e) => {
-                    log::trace!("{}", e);
+                    log::debug!("{}", e);
                     (async {Response::bad_request()}).boxed()
                 }
             }
@@ -211,7 +211,7 @@ impl<T: Sync + Send> Branch<T> {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(e) => {
-                    log::trace!("{}", e);
+                    log::debug!("{}", e);
                     (async {Response::bad_request()}).boxed()
                 }
             }

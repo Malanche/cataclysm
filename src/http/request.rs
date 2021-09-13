@@ -13,6 +13,8 @@ pub struct Request {
     pub(crate) depth: usize,
     /// headers from the request
     pub headers: HashMap<String, String>,
+    /// Header size in bytes
+    pub(crate) header_size: usize,
     /// Address from the request
     pub(crate) addr: Option<std::net::SocketAddr>,
     pub(crate) content: Vec<u8>
@@ -25,7 +27,7 @@ impl Request {
 
         let mut split_index = None;
         for (idx, (a, b)) in one.zip(two).enumerate() {
-            if a==b && b==&b'\n' {
+            if a==b && b==&b'\n' && idx > 0 && source[idx-1] == b'\r' && source[idx+1] == b'\r' {
                 split_index = Some(idx);
                 break;
             }
@@ -33,11 +35,14 @@ impl Request {
 
         let split_index = split_index.ok_or(Error::Parse(format!("no end of header was found")))?;
 
-        let content: Vec<_> = source.drain((split_index)..).collect();
-        //source.truncate(split_index);
-        // Cambiamos esto a una cadena
+        // The minus one is a safe operation, due to the upper for loop
+        let mut content: Vec<_> = source.drain((split_index - 1)..).collect();
+        // We have to remove the `\r\n\r\n` that is at the beginning of the remaining bytes
+        content.drain(..4);
+        // The request header needs to be a string
+        let header_size = source.len() + 4;
         let request_string = String::from_utf8(source).map_err(|e| Error::Parse(format!("{}", e)))?;
-        let mut lines = request_string.split("\n");
+        let mut lines = request_string.split("\r\n");
         let first_line = lines.next().ok_or(Error::Parse("request has no first line".into()))?;
         let tokens = first_line.split(" ").collect::<Vec<_>>();
         if tokens.len() < 3 {
@@ -60,6 +65,7 @@ impl Request {
             variable_indices: vec![],
             depth: 0,
             headers,
+            header_size,
             addr: None,
             content
         })

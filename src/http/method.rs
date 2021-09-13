@@ -44,7 +44,7 @@ impl MultipleMethod {
                 match <A as Extractor<T>>::extract(&req, additional) {
                     Ok(args) => handler.invoke(args).boxed(),
                     Err(e) => {
-                        println!("{}", e);
+                        log::debug!("{}", e);
                         (async {Response::bad_request()}).boxed()
                     }
                 }
@@ -76,7 +76,7 @@ impl Method {
                 match <A as Extractor<T>>::extract(&req, additional) {
                     Ok(args) => handler.invoke(args).boxed(),
                     Err(e) => {
-                        println!("{}", e);
+                        log::debug!("{}", e);
                         (async {Response::bad_request()}).boxed()
                     }
                 }

@@ -1,6 +1,6 @@
 use tokio::net::{TcpListener, TcpStream};
 use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
-use log::{info, error, trace};
+use log::{info, error};
 use futures::{
     select,
     future::FutureExt,
@@ -225,8 +225,11 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     /// Deals with the read part of the socket stream
-    async fn dispatch_read(socket: &TcpStream) -> Result<Vec<u8>, Error> {
+    async fn dispatch_read(socket: &TcpStream) -> Result<Option<Vec<u8>>, Error> {
         let mut request_bytes = Vec::with_capacity(8192);
+        let mut expected_length = None;
+        let mut header_size = 0;
+        let mut request = None;
         // First we read
         loop {
             socket.readable().await.map_err(|e| Error::Io(e))?;
@@ -242,12 +245,43 @@ impl<T: 'static + Sync + Send> Server<T> {
                 },
                 Ok(n) => request_bytes.extend_from_slice(&buf[0..n]),
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    break;
+                    if request.is_none() {
+                        request = match Request::parse(request_bytes.clone()) {
+                            Ok(r) => {
+                                // We check if we need to give a continue 100
+                                if r.headers.get("Expect").map(|h| h == "100-continue").unwrap_or(false) {
+                                    Server::<T>::dispatch_write(&socket, Response::r#continue()).await?;
+                                    continue;
+                                }
+
+                                // We check now if there is a content size hint
+                                expected_length = r.headers.get("Content-Length").map(|v| v.parse::<usize>().ok()).flatten();
+                                header_size = r.header_size;
+                                Some(r)
+                            },
+                            Err(e) => {
+                                log::debug!("{}", e);
+                                Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
+                                return Ok(None)
+                            }
+                        };
+                    }
+
+                    // And now we check if, given the hint, we need to act upon.
+                    if let Some(expected_length) = &expected_length {
+                        if *expected_length > request_bytes.len() - header_size {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
                 }
                 Err(e) => return Err(Error::Io(e))
             }
         }
-        Ok(request_bytes)
+        Ok(Some(request_bytes))
     }
 
     async fn dispatch_write(socket: &TcpStream, mut response: Response) -> Result<(), Error> {
@@ -271,25 +305,17 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, additional: Arc<Additional<T>>, log_string: Arc<Option<String>>, pure_branch: Arc<PureBranch<T>>) -> Result<(), Error> {
-        let mut request_bytes = Vec::new();
-        let mut second_part = false;
-        let mut request = loop {
-            request_bytes.extend(Server::<T>::dispatch_read(&socket).await?);
-            
-            let request = match Request::parse(request_bytes.clone()) {
-                Ok(r) => r,
-                Err(e) => {
-                    trace!("{}", e);
-                    Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
-                    return Ok(())
-                }
-            };
-
-            if !second_part && request.headers.get("Expect").map(|h| h == "100-continue").unwrap_or(false) {
-                Server::<T>::dispatch_write(&socket, Response::r#continue()).await?;
-                second_part = true;
-            } else {
-                break request
+        // let mut second_part = false;
+        let request_bytes = match Server::<T>::dispatch_read(&socket).await? {
+            Some(b) => b,
+            None => return Ok(())
+        };
+        let mut request =match Request::parse(request_bytes.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                log::debug!("{}", e);
+                Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
+                return Ok(())
             }
         };
 
