@@ -12,6 +12,21 @@ pub struct File {
 }
 
 /// Multipart extractor
+///
+/// Meant to be used in functions to extract files from an http request
+///
+/// ```rust, no_run
+/// # use cataclysm::http::{Response, Multipart};
+/// async fn receive_file(multipart: Multipart) -> Response {
+///     for file in multipart.files() {
+///         if let Some(filename) = &file.filename {
+///             log::info!("Found file {}, writing content", filename);
+///             // Do something with the file...
+///         }
+///     }
+///     Response::ok()
+/// }
+/// ```
 pub struct Multipart {
     raw_files: HashMap<String, File>
 }

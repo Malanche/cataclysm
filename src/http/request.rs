@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::{Error, http::Method};
 
+/// Contains the data from an http request.
 #[derive(Clone)]
 pub struct Request {
     /// Method that the request used
@@ -21,7 +22,7 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn parse(mut source: Vec<u8>) -> Result<Request, Error> {
+    pub(crate) fn parse(mut source: Vec<u8>) -> Result<Request, Error> {
         // http call should have at least 3 bytes. For sure
         let (one, two) = (source.iter(), source.iter().skip(2));
 

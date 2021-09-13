@@ -58,3 +58,6 @@ tuple_extractor!(A, B);
 tuple_extractor!(A, B, C);
 tuple_extractor!(A, B, C, D);
 tuple_extractor!(A, B, C, D, E);
+tuple_extractor!(A, B, C, D, E, F);
+tuple_extractor!(A, B, C, D, E, F, G);
+tuple_extractor!(A, B, C, D, E, F, G, H);

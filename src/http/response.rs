@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+/// Contains the data of an http response
 pub struct Response {
     protocol: String,
     pub(crate) status: (u32, &'static str),
@@ -19,7 +20,7 @@ impl Into<Response> for (u32, &'static str) {
 }
 
 impl Response {
-    /// Informational
+    // Informational
     const CONTINUE: (u32, &'static str) = (100, "Continue");
 
     // Successful responses
@@ -46,27 +47,45 @@ impl Response {
     const BAD_GATEWAY: (u32, &'static str) = (502, "Bad Gateway");
     const SERVICE_UNAVAILABLE: (u32, &'static str) = (503, "Service Unavailable");
 
+    /// Creates an Continue response, with a 100 status code
     pub fn r#continue() -> Response{ Response::CONTINUE.into() }
 
+    /// Creates an Ok response, with a 200 status code
     pub fn ok() -> Response { Response::OK.into() }
+    /// Creates a Created response, with a 201 status code
     pub fn created() -> Response { Response::CREATED.into() }
+    /// Creates an Accepted response, with a 202 status code
     pub fn accepted() -> Response { Response::ACCEPTED.into() }
+    /// Creates a Non-Authoritative Information response, with a 203 status code
     pub fn non_authoritative_information() -> Response { Response::NON_AUTHORITATIVE_INFORMATION.into() }
+    /// Creates a No Content response, with a 204 status code
     pub fn no_content() -> Response { Response::NO_CONTENT.into() }
+    /// Creates a Reset Content response, with a 205 status code
     pub fn reset_content() -> Response { Response::RESET_CONTENT.into() }
+    /// Creates a Partial Content response, with a 206 status code
     pub fn partial_content() -> Response { Response::PARTIAL_CONTENT.into() }
 
+    /// Creates a Bad Request response, with a 400 status code
     pub fn bad_request() -> Response { Response::BAD_REQUEST.into() }
+    /// Creates an Unauthorized response, with a 401 status code
     pub fn unauthorized() -> Response { Response::UNAUTHORIZED.into() }
+    /// Creates a Payment Required response, with a 402 status code
     pub fn payment_required() -> Response { Response::PAYMENT_REQUIRED.into() }
+    /// Creates a Forbidden response, with a 403 status code
     pub fn forbidden() -> Response { Response::FORBIDDEN.into() }
+    /// Creates a Not Found response, with a 404 status code
     pub fn not_found() -> Response { Response::NOT_FOUND.into() }
 
+    /// Creates an Internal Server Error response, with a 500 status code
     pub fn internal_server_error() -> Response { Response::INTERNAL_SERVER_ERROR.into() }
+    /// Creates a Not Implemented response, with a 501 status code
     pub fn not_implemented() -> Response { Response::NOT_IMPLEMENTED.into() }
+    /// Creates a Bad Gateway response, with a 502 status code
     pub fn bad_gateway() -> Response { Response::BAD_GATEWAY.into() }
+    /// Creates a Service Unavailable response, with a 503 status code
     pub fn service_unavailable() -> Response { Response::SERVICE_UNAVAILABLE.into() }
 
+    /// Creates a new response, with defaut response status 200, and a text/html content type
     pub fn new() -> Response {
         Response {
             protocol: "HTTP/1.1".into(),
@@ -76,17 +95,20 @@ impl Response {
         }
     }
 
+    /// Inserts a header into the response
     pub fn header<A: Into<String>, B: Into<String>>(mut self, key: A, value: B) -> Response {
         self.headers.insert(key.into(), value.into());
         self
     }
 
+    /// Inserts a body in the response
     pub fn body<T: AsRef<[u8]>>(mut self, body: T) -> Response {
         self.content = Vec::from(body.as_ref());
         self
     }
 
-    pub fn serialize(&mut self) -> Vec<u8> {
+    /// Serializes the response to be sent to the client
+    pub(crate) fn serialize(&mut self) -> Vec<u8> {
         let mut response = format!("{} {} {}\r\n", self.protocol, self.status.0, self.status.1);
 
         self.headers.insert("Content-Length".into(), format!("{}", self.content.len()));
