@@ -236,7 +236,7 @@ impl<T: Sync + Send> Branch<T> {
         let close: Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<(dyn futures::Future<Output = Response> + Send + 'static)>> + Sync + Send> = Box::new(move |req: Request, _additional: Arc<Additional<T>>|  {
             let mut fl_clone = fl.clone();
             (async move {
-                let trimmed_trail = req.path.trim_start_matches("/");
+                let trimmed_trail = req.path().trim_start_matches("/");
                 let tokens = trimmed_trail.tokenize();
                 let path: PathBuf = tokens.iter().skip(req.depth).collect();
                 fl_clone.push(path);
@@ -536,7 +536,7 @@ impl<T> PureBranch<T> {
     /// Creates the pipeline of futures to be processed by the server
     pub(crate) fn pipeline(&self, request: &mut Request) -> Option<Pipeline<T>> {
         // We get the core handler, and the possible layers
-        if let Some(c_info) = self.callback_information(&request.path, &request.method) {
+        if let Some(c_info) = self.callback_information(request.path(), &request.method) {
             // We have to update the variable locations
             request.depth = c_info.variable_indicators.len();
 

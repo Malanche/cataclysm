@@ -332,8 +332,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             None => Response::not_found()
         };
         if let Some(log_string) = &*log_string {
-            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
-            //info!("[{} {}] {} from {}", request.method.to_str(), request.path, response.status.0, addr);
+            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
         Server::<T>::dispatch_write(&socket, response).await?;
         //socket.shutdown();

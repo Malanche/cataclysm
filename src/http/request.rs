@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::{Error, http::Method};
+use url::Url;
 
 /// Contains the data from an http request.
 #[derive(Clone)]
@@ -7,7 +8,7 @@ pub struct Request {
     /// Method that the request used
     pub(crate) method: Method,
     /// Route that the user requested
-    pub(crate) path: String,
+    pub(crate) url: Url,
     /// Variable positions, if any (set by the pure branch)
     pub(crate) variable_indices: Vec<usize>,
     /// How deep in the tree this endpoint finds itself (set by the pure branch)
@@ -22,6 +23,15 @@ pub struct Request {
 }
 
 impl Request {
+    /// Returns the path from this request
+    pub fn path(&self) -> &str {
+        self.url.path()
+    }
+
+    pub fn query(&self) -> Option<&str> {
+        self.url.query()
+    }
+
     pub(crate) fn parse(mut source: Vec<u8>) -> Result<Request, Error> {
         // http call should have at least 3 bytes. For sure
         let (one, two) = (source.iter(), source.iter().skip(2));
@@ -43,16 +53,20 @@ impl Request {
         // The request header needs to be a string
         let header_size = source.len() + 4;
         let request_string = String::from_utf8(source).map_err(|e| Error::Parse(format!("{}", e)))?;
+
         let mut lines = request_string.split("\r\n");
         let first_line = lines.next().ok_or(Error::Parse("request has no first line".into()))?;
         let tokens = first_line.split(" ").collect::<Vec<_>>();
-        if tokens.len() < 3 {
+        let (method, path, version) = if tokens.len() != 3 {
             return Err(Error::Parse("request's first has incorrect format".into()));
-        }
-        let method = Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?;
-        let path = tokens[1].to_string();
-        let _version = tokens[2];
-        // Parse following lines
+        } else {
+            (
+                Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?,
+                tokens[1],
+                tokens[2]
+            )
+        };
+        // We parse the remaining headers
         let mut headers = HashMap::new();
         for line in lines {
             let idx = line.find(":").ok_or(Error::Parse(format!("corrupted header missing colon")))?;
@@ -60,9 +74,19 @@ impl Request {
             let (key, value) = (key.to_string(), value.trim_start_matches(": ").trim_end().to_string());
             headers.insert(key, value);
         }
+
+        ;
+        //let method = Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?;
+        if !version.starts_with("HTTP") {
+            return Err(Error::Parse("unsupported protocol".into()))
+        }
+        // And we construct the request
+        let url = Url::parse(&format!("http://{}{}",headers.get("Host").cloned().unwrap_or("missing.host".to_string()), path)).map_err(|e| Error::Parse(format!("wrong url path, {}", e)))?;
+        //let _version = tokens[2];
+        // Parse following lines
         Ok(Request {
             method,
-            path,
+            url,
             variable_indices: vec![],
             depth: 0,
             headers,
