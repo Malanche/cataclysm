@@ -1,4 +1,7 @@
-use crate::{additional::Additional, http::{Response, Request}};
+use crate::{
+    additional::Additional,
+    http::{Response, Request},
+    ws::{WebSocketWriter, WebSocketReader}};
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
@@ -25,6 +28,8 @@ impl<T> Pipeline<T> {
 pub type CoreFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 /// Type representing middleware functions
 pub type LayerFn<T> = Box<dyn Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+/// Type representing a websocket handler function
+pub type WebsocketFn = Box<dyn Fn(WebSocketWriter) -> Pin<Box<dyn Future<Output = Box<dyn WebSocketReader>> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {

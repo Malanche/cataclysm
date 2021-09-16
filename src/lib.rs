@@ -36,13 +36,10 @@ mod shared;
 pub use self::additional::Additional;
 mod additional;
 
-pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
+pub use self::metafunctions::{Callback, CoreFn, LayerFn, WebsocketFn, Pipeline, Extractor};
 mod metafunctions;
 
 pub use self::session::Session;
 mod session;
 
-//use self::api::{ApiResponse};
-mod api;
-//use tokio::io::AsyncWriteExt;
-//use std::io::prelude::*;
+pub mod ws;

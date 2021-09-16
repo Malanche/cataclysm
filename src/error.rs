@@ -11,6 +11,10 @@ pub enum Error {
     ExtractionSE(String),
     /// Indicates a Ring error
     Ring,
+    /// Indicate sthat the connection was closed abruptly
+    ConnectionReset,
+    /// Indicates a websockets Incomplete Message
+    Incomplete,
     Dummy
 }
 
@@ -22,6 +26,8 @@ impl std::fmt::Display for Error {
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
             Error::Ring => format!("ring error"),
+            Error::ConnectionReset => format!("connection reset by peer"),
+            Error::Incomplete => format!("incomplete frame message in ws connection"),
             Error::Dummy => format!("Dummy error")
         };
         write!(formatter, "{}", content)

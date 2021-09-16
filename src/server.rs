@@ -1,12 +1,7 @@
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
+use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, ws::{WebSocketThread, WebSocketWriter}, Error};
 use log::{info, error};
-use futures::{
-    select,
-    future::FutureExt,
-    channel::oneshot
-};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use ring::{hmac::{self, Key}, rand};
 
 /// Builder pattern for the server structure
@@ -167,38 +162,13 @@ impl<T: 'static + Sync + Send> Server<T> {
 
     pub async fn run<S: AsRef<str>>(&self, socket: S) -> Result<(), Error> {
         let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
-        
-        // We use mpsc because ctrlc requires an FnMut function
-        let (tx, mut rx) = oneshot::channel::<()>();
-        // We put the tx behind an arc mutex
-        let tx = Arc::new(Mutex::new(Some(tx)));
-        // ctrl + c handler
-        ctrlc::set_handler(move || {
-            match tx.clone().lock() {
-                Ok(mut locked) => match (*locked).take() {
-                    Some(tx) => {
-                        info!("Shut down requested");
-                        match tx.send(()) {
-                            Ok(_) => (),
-                            Err(_) => error!("could not complete request")
-                        };
-                    },
-                    None => {
-                        info!("Working on it!");
-                    }
-                },
-                Err(e) => {
-                    error!("{}", e);
-                }
-            }
-        }).unwrap();
 
         info!("Cataclysm ongoing \u{26c8}");
         loop {
             // We need a fused future for the select macro
-            let mut next_connection = Box::pin(listener.accept().fuse());
-            select! {
-                res = next_connection => match res {
+            //let mut next_connection = Box::pin(listener.accept().fuse());
+            tokio::select! {
+                res = listener.accept() => match res {
                     Ok((socket, addr)) => {
                         let pure_branch_clone = self.pure_branch.clone();
                         let additional = self.additional.clone();
@@ -216,7 +186,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                         error!("{}", e);
                     }
                 },
-                _ = rx => {
+                _ = tokio::signal::ctrl_c() => {
                     info!("Shutting down server");
                     break Ok(())
                 }
@@ -319,23 +289,48 @@ impl<T: 'static + Sync + Send> Server<T> {
             }
         };
 
-        request.addr = Some(addr);
-        
-        // The method will take the request, and modify particularly the "variable count" variable
-        let response = match pure_branch.pipeline(&mut request) {
-            Some(pipeline) => {
-                match pipeline {
-                    Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, additional),
-                    Pipeline::Core(core_fn) => core_fn(request.clone(), additional)
-                }.await
-            },
-            None => Response::not_found()
-        };
-        if let Some(log_string) = &*log_string {
-            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+        // The request could be an upgrade request for a websockets connection
+        if request.headers.get("Upgrade").map(|v| v == "websocket").unwrap_or(false) && request.headers.get("Connection").map(|v| v == "Upgrade" || v == "keep-alive, Upgrade").unwrap_or(false) {
+            if let Some(nonce) = request.headers.get("Sec-WebSocket-Key") {
+                // According to RFC4122
+                let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
+                let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
+
+                // We request a websocket handler
+                match pure_branch.websocket_handler(request.path()) {
+                    Some(handler) => {
+                        let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
+                        Server::<T>::dispatch_write(&socket, response).await?;
+                        let (owned_read, owned_write) = socket.into_split();
+                        let web_socket_writer = WebSocketWriter::new(owned_write);
+                        WebSocketThread::spawn(owned_read, handler(web_socket_writer).await);
+                    },
+                    None => {
+                        Server::<T>::dispatch_write(&socket, Response::not_found()).await?;
+                    }
+                }
+            } else {
+                Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
+            }
+        } else {
+            request.addr = Some(addr);
+            
+            // The method will take the request, and modify particularly the "variable count" variable
+            let response = match pure_branch.pipeline(&mut request) {
+                Some(pipeline) => {
+                    match pipeline {
+                        Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, additional),
+                        Pipeline::Core(core_fn) => core_fn(request.clone(), additional)
+                    }.await
+                },
+                None => Response::not_found()
+            };
+            if let Some(log_string) = &*log_string {
+                info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+            }
+            Server::<T>::dispatch_write(&socket, response).await?;
+            //socket.shutdown();
         }
-        Server::<T>::dispatch_write(&socket, response).await?;
-        //socket.shutdown();
         Ok(())
     }
 }

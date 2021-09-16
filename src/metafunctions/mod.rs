@@ -1,4 +1,4 @@
-pub use self::callback::{Callback, CoreFn, LayerFn, Pipeline};
+pub use self::callback::{Callback, CoreFn, LayerFn, WebsocketFn, Pipeline};
 mod callback;
 
 pub use self::extractor::Extractor;

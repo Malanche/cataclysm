@@ -3,8 +3,9 @@ use regex::Regex;
 use futures::future::FutureExt;
 use crate::{
     additional::Additional,
-    CoreFn, LayerFn, Extractor, Callback, Pipeline,
-    http::{Method, Request, Response, MethodHandler}
+    CoreFn, LayerFn, WebsocketFn, Extractor, Callback, Pipeline,
+    http::{Method, Request, Response, MethodHandler},
+    ws::{WebSocketWriter, WebSocketReader}
 };
 use std::sync::Arc;
 use std::pin::Pin;
@@ -67,7 +68,9 @@ pub struct Branch<T> {
     /// File callback, in case this endpoint wants to be used for static file serving
     files_callback: Option<Arc<CoreFn<T>>>,
     /// Layer functions on this branch
-    layers: Vec<Arc<LayerFn<T>>>
+    layers: Vec<Arc<LayerFn<T>>>,
+    /// And last but not least, websocket endpoint
+    websocket_callback: Option<Arc<WebsocketFn>>
 }
 
 impl<T> std::fmt::Display for Branch<T> {
@@ -117,6 +120,7 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback: None,
             default_callback: None,
             files_callback: None,
+            websocket_callback: None,
             layers: vec![]
         };
         let (base, rest_branch) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
@@ -440,10 +444,20 @@ impl<T: Sync + Send> Branch<T> {
     /// ```
     ///
     /// Calling the function multiple times will wrap the preceeding layer (or core handlers), like an onion 🧅.
-    pub fn layer<F: Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync + 'static>(mut self, layer_fn: F) -> Self {
+    pub fn layer<F: 'static + Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>(mut self, layer_fn: F) -> Self {
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
         top_branch.layers.push(Arc::new(Box::new(layer_fn)));
+        self
+    }
+
+    /// Callback handler for websocket connections
+    pub fn websocket<W: 'static + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter) -> A + Send + Sync>(mut self, handler: F) -> Self {
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.websocket_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter| handler(websocket).map(|wsr| -> Box<dyn WebSocketReader>{
+            Box::new(wsr)
+        }).boxed())));
         self
     }
 
@@ -459,7 +473,8 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback: self.default_method_callback,
             default_callback: self.default_callback,
             files_callback: self.files_callback,
-            layers: self.layers
+            layers: self.layers,
+            websocket_callback: self.websocket_callback
         }
     }
 
@@ -529,10 +544,52 @@ pub(crate) struct PureBranch<T> {
     default_method_callback: Option<Arc<CoreFn<T>>>,
     default_callback: Option<Arc<CoreFn<T>>>,
     files_callback: Option<Arc<CoreFn<T>>>,
-    layers: Vec<Arc<LayerFn<T>>>
+    layers: Vec<Arc<LayerFn<T>>>,
+    websocket_callback: Option<Arc<WebsocketFn>>
 }
 
 impl<T> PureBranch<T> {
+    /// Returns a web socket handler, if any
+    pub(crate) fn websocket_handler<A: AsRef<str>>(&self, trail: A) -> Option<Arc<WebsocketFn>> {
+        // Tokenizamos la cadena
+        let trimmed_trail = trail.as_ref().trim_start_matches("/");
+        
+        let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
+            (base.to_string(), rest.to_string())
+        } else {
+            // Only one token here
+            if trimmed_trail.is_empty() {
+                return self.websocket_callback.clone();
+            } else {
+                (trimmed_trail.to_string(), "".to_string())
+            }
+        };
+
+        // Now we check if any nested branch has something
+        let mut result = None;
+        
+        // First, exact matching through hash lookup
+        if let Some(branch) = self.exact_branches.get(&base) {
+            result = branch.websocket_handler(rest);
+        } else {
+            // Now, O(n) regex pattern matching
+            for (pattern, branch) in self.pattern_branches.iter() {
+                if pattern.is_match(&base) {
+                    result = branch.websocket_handler(&rest);
+                    break;
+                }
+            }
+
+            if result.is_none() {
+                // Finally, if there is a variable, we reply (constant time)
+                if let Some((_id, branch)) = &self.variable_branch {
+                    result = branch.websocket_handler(rest);
+                }
+            }
+        }
+        result
+    }
+
     /// Creates the pipeline of futures to be processed by the server
     pub(crate) fn pipeline(&self, request: &mut Request) -> Option<Pipeline<T>> {
         // We get the core handler, and the possible layers

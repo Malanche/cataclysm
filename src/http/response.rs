@@ -22,6 +22,7 @@ impl Into<Response> for (u32, &'static str) {
 impl Response {
     // Informational
     const CONTINUE: (u32, &'static str) = (100, "Continue");
+    const SWITCHING_PROTOCOLS: (u32, &'static str) = (101, "Switching Protocols");
 
     // Successful responses
     const OK: (u32, &'static str) = (200, "OK");
@@ -49,6 +50,8 @@ impl Response {
 
     /// Creates an Continue response, with a 100 status code
     pub fn r#continue() -> Response{ Response::CONTINUE.into() }
+    /// Creates an Switching Protocols response, with a 101 status code
+    pub fn switching_protocols() -> Response{ Response::SWITCHING_PROTOCOLS.into() }
 
     /// Creates an Ok response, with a 200 status code
     pub fn ok() -> Response { Response::OK.into() }
