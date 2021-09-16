@@ -27,10 +27,12 @@ impl WebSocketThread {
         };
 
         tokio::spawn(async move {
+            web_socket_thread.web_socket_reader.on_open().await;
             match web_socket_thread.read_loop().await {
                 Ok(_) => log::debug!("Leaving read loop in a nice manner"),
                 Err(e) => log::debug!("Leaving read loop with error, {}", e)
             };
+            web_socket_thread.web_socket_reader.on_close().await;
         });
     }
 
@@ -64,8 +66,11 @@ impl WebSocketThread {
                 // We got a correct message, we clear the buffer
                 buf.clear();
                 // And call the handler
-                self.web_socket_reader.on_message(frame.message).await;
+                if let Some(message) = frame.message {
+                    self.web_socket_reader.on_message(message).await;
+                }
             } else {
+                // Closing the connection in a nice way
                 break Ok(());
             }
         }

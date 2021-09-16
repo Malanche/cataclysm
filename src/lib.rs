@@ -42,4 +42,5 @@ mod metafunctions;
 pub use self::session::Session;
 mod session;
 
+/// Contains some basic websockets functionality
 pub mod ws;

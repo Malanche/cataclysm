@@ -1,8 +1,14 @@
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    sync::Semaphore,
+    net::{TcpListener, TcpStream}
+};
 use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, ws::{WebSocketThread, WebSocketWriter}, Error};
 use log::{info, error};
 use std::sync::{Arc};
 use ring::{hmac::{self, Key}, rand};
+
+// Default max connections for the server
+const MAX_CONNECTIONS: usize = 2_000;
 
 /// Builder pattern for the server structure
 ///
@@ -11,7 +17,8 @@ pub struct ServerBuilder<T> {
     branch: Branch<T>,
     shared: Option<Shared<T>>,
     secret: Option<Key>,
-    log_string: Option<String>
+    log_string: Option<String>,
+    max_connections: usize
 }
 
 impl<T: Sync + Send> ServerBuilder<T> {
@@ -28,7 +35,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
             branch,
             shared: None,
             secret: None,
-            log_string: None
+            log_string: None,
+            max_connections: MAX_CONNECTIONS
         }
     }
 
@@ -93,7 +101,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// Sets a log string, to log information per call
     ///
     /// ```rust,no_run
-    /// # use cataclysm::{Server, Session, Branch, Shared, http::{Response, Method, Path}};
+    /// # use cataclysm::{Server, Branch, Shared, http::{Response, Method, Path}};
     /// // Tree structure
     /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
     /// // Now we configure the server
@@ -109,6 +117,20 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// (more data to be added soon)
     pub fn log_format<A: Into<String>>(mut self, log_string: A) -> Self {
         self.log_string = Some(log_string.into());
+        self
+    }
+
+    /// Sets up a maximum number of connections for the server to be dealt with
+    ///
+    /// ```rust,no_run
+    /// # use cataclysm::{Server, Branch, Shared, http::{Response, Method, Path}};
+    /// // Tree structure
+    /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
+    /// // Now we configure the server
+    /// let server = Server::builder(branch).max_connections(10_000).build().unwrap();
+    /// ```
+    pub fn max_connections(mut self, n: usize) -> Self {
+        self.max_connections = n;
         self
     }
 
@@ -140,7 +162,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
                 shared: self.shared,
                 secret: Arc::new(Key::generate(hmac::HMAC_SHA256, &rng).map_err(|_| Error::Ring)?)
             }),
-            log_string: Arc::new(self.log_string)
+            log_string: Arc::new(self.log_string),
+            max_connections: Arc::new(Semaphore::new(self.max_connections))
         })
     }
 }
@@ -151,7 +174,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
 pub struct Server<T> {
     pure_branch: Arc<PureBranch<T>>,
     additional: Arc<Additional<T>>,
-    log_string: Arc<Option<String>>
+    log_string: Arc<Option<String>>,
+    max_connections: Arc<Semaphore>
 }
 
 impl<T: 'static + Sync + Send> Server<T> {
@@ -164,9 +188,47 @@ impl<T: 'static + Sync + Send> Server<T> {
         let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
 
         info!("Cataclysm ongoing \u{26c8}");
+        // We need a fused future for the select macro
+        tokio::select! {
+            _ = async {
+                loop {
+                    // We lock the loop until one permit becomes available
+                    self.max_connections.acquire().await.unwrap().forget();
+                    
+                    match listener.accept().await {
+                        Ok((socket, addr)) => {
+                            let pure_branch_clone = self.pure_branch.clone();
+                            let additional = self.additional.clone();
+                            let log_string = self.log_string.clone();
+                            let max_connections = self.max_connections.clone();
+                            tokio::spawn(async move {
+                                match Server::<T>::dispatch(socket, addr, additional, log_string, pure_branch_clone).await {
+                                    Ok(_) => (),
+                                    Err(e) => {
+                                        error!("{}", e);
+                                    }
+                                }
+                                // We set up back the permits
+                                max_connections.add_permits(1);
+                            });
+                        },
+                        Err(e) => {
+                            error!("{}", e);
+                        }
+                    }
+                }
+            } => (),
+            _ = tokio::signal::ctrl_c() => {
+                info!("Shutting down server");
+            }
+        };
+        Ok(())
+        /*
+        let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
+
+        info!("Cataclysm ongoing \u{26c8}");
         loop {
             // We need a fused future for the select macro
-            //let mut next_connection = Box::pin(listener.accept().fuse());
             tokio::select! {
                 res = listener.accept() => match res {
                     Ok((socket, addr)) => {
@@ -192,6 +254,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                 }
             };
         }
+        */
     }
 
     /// Deals with the read part of the socket stream

@@ -452,6 +452,51 @@ impl<T: Sync + Send> Branch<T> {
     }
 
     /// Callback handler for websocket connections
+    ///
+    /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) trait for one structure.
+    /// 
+    /// ```rust,no_run
+    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, Message}, Server, Branch};
+    /// 
+    /// struct Example{
+    ///     web_socket_writer: WebSocketWriter
+    /// }
+    /// 
+    /// impl Example {
+    ///     fn new(web_socket_writer: WebSocketWriter) -> Example {
+    ///         Example{web_socket_writer}
+    ///     }
+    /// }
+    /// 
+    /// #[async_trait::async_trait]
+    /// impl WebSocketReader for Example {
+    ///     async fn on_open(&mut self) {
+    ///         // ... do something
+    ///     }
+    /// 
+    ///     async fn on_message(&mut self, message: Message) {
+    ///         // ... do something
+    ///     }
+    /// 
+    ///     async fn on_close(&mut self) {
+    ///         // ... do something
+    ///     }
+    /// }
+    /// 
+    /// async fn deal_with_ws(web_socket_writer: WebSocketWriter) -> Example {
+    ///     Example::new(web_socket_writer)
+    /// }
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let branch: Branch<()> = Branch::new("/")
+    ///         .nest(Branch::new("/ws").websocket(deal_with_ws))
+    ///         .files("./static")
+    ///         .defaults_to_file("./static/index.html");
+    ///     let server = Server::builder(branch).build().unwrap();
+    ///     server.run("127.0.0.1:8000").await.unwrap();
+    /// }
+    /// ```
     pub fn websocket<W: 'static + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter) -> A + Send + Sync>(mut self, handler: F) -> Self {
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();

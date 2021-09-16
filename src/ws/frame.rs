@@ -1,9 +1,11 @@
 use crate::{Error, ws::Message};
 
+/// Frame structure from websockets connection
 pub struct Frame {
-    op_code: u8,
+    inner_op_code: u8,
     masking_key: Option<u32>,
-    pub(crate) message: Message
+    /// Payload
+    pub(crate) message: Option<Message>
 }
 
 impl Frame {
@@ -14,6 +16,10 @@ impl Frame {
     pub const OP_CODE_CLOSE: u8 = 0x08;
     pub const OP_CODE_PING: u8 = 0x09;
     pub const OP_CODE_PONG: u8 = 0x0A;
+
+    pub fn op_code(&self) -> u8 {
+        self.inner_op_code
+    }
 
     /// Parses a frame from a stream of bytes
     pub fn parse<A: AsRef<[u8]>>(content: A) -> Result<Frame, Error> {
@@ -43,7 +49,7 @@ impl Frame {
             None
         };
         // Now we read the operation code
-        let op_code = (candidate[0] << 4) >> 4;
+        let inner_op_code = (candidate[0] << 4) >> 4;
         let mut payload = candidate.get(offset..offset+length).ok_or_else(|| Error::Incomplete)?.to_vec();
         if let Some(masking_key) = &masking_key {
             payload = payload.into_iter().enumerate().map(|(idx, v)| {
@@ -52,13 +58,16 @@ impl Frame {
                 v ^ masking_key[j]
             }).collect();
         }
-        let message = match op_code {
-            Frame::OP_CODE_TEXT => Message::Text(String::from_utf8(payload).map_err(|e| Error::Parse(format!("{}", e)))?),
+        let message = match inner_op_code {
+            Frame::OP_CODE_TEXT => Some(Message::Text(String::from_utf8(payload).map_err(|e| Error::Parse(format!("{}", e)))?)),
+            Frame::OP_CODE_CLOSE => None,
+            Frame::OP_CODE_PING => None,
+            Frame::OP_CODE_PONG => None,
             _ => panic!("Not supported")
         };
 
         Ok(Frame {
-            op_code,
+            inner_op_code,
             masking_key: masking_key.map(u32::from_be_bytes),
             message
         })
@@ -67,18 +76,18 @@ impl Frame {
     /// Creates a text frame
     pub fn text<A: Into<String>>(text: A) -> Frame {
         let payload = text.into();
-        let message = Message::Text(payload);
+        let message = Some(Message::Text(payload));
         Frame {
-            op_code: Frame::OP_CODE_TEXT,
+            inner_op_code: Frame::OP_CODE_TEXT,
             masking_key: None,
             message
         }
     }
 
     pub fn bytes(self) -> Vec<u8> {
-        let mut content = vec![Frame::FIN_RSV ^ self.op_code];
-        let mut payload = self.message.to_bytes();
-        let payload_length = payload.len();
+        let mut content = vec![Frame::FIN_RSV ^ self.inner_op_code];
+        let mut payload = self.message.map(|m| m.to_bytes());
+        let payload_length = payload.iter().map(|m| m.len()).next().unwrap_or(0);
         if payload_length < 126 {
             content.push(payload_length as u8 | if self.masking_key.is_some() {0x80} else {0x00});
         } else {
@@ -87,15 +96,16 @@ impl Frame {
 
         if let Some(masking_key) = &self.masking_key {
             let masking_bytes = masking_key.to_be_bytes();
-            payload = payload.into_iter().enumerate().map(|(idx, v)| {
+            payload = payload.map(|b| b.into_iter().enumerate().map(|(idx, v)| {
                 // According to rfc 6455
                 let j = idx % 4;
                 v ^ masking_bytes[j]
-            }).collect();
+            }).collect());
             content.extend(masking_bytes);
         }
-        
-        content.extend(payload);
+        if let Some(payload) = payload {
+            content.extend(payload);
+        }
         
         content
     }

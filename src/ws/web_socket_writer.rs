@@ -1,6 +1,7 @@
 use tokio::net::{TcpStream, tcp::OwnedWriteHalf};
 use crate::{Error, ws::Frame};
 
+/// Sending part of web sockets connection
 pub struct WebSocketWriter {
     write_stream: OwnedWriteHalf
 }
@@ -20,6 +21,7 @@ impl WebSocketWriter {
         }
     }
 
+    /// Sends a text message through the websockets connection
     pub async fn text<A: Into<String>>(&self, text: A) -> Result<(), Error> {
         let content = Frame::text(text).bytes();
         loop {
