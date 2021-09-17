@@ -1,4 +1,8 @@
-pub use self::callback::{Callback, CoreFn, LayerFn, WebsocketFn, Pipeline};
+pub use self::callback::{Callback, CoreFn, LayerFn, Pipeline};
+#[cfg(feature = "ws")]
+pub use self::callback::{WebSocketFn};
+#[cfg(feature = "demon")]
+pub use self::callback::{WebSocketDemonFn};
 mod callback;
 
 pub use self::extractor::Extractor;

@@ -36,11 +36,16 @@ mod shared;
 pub use self::additional::Additional;
 mod additional;
 
-pub use self::metafunctions::{Callback, CoreFn, LayerFn, WebsocketFn, Pipeline, Extractor};
+pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
+#[cfg(feature = "ws")]
+pub use self::metafunctions::{WebSocketFn};
+#[cfg(feature = "demon")]
+pub use self::metafunctions::{WebSocketDemonFn};
 mod metafunctions;
 
 pub use self::session::Session;
 mod session;
 
 /// Contains some basic websockets functionality
+#[cfg(feature = "ws")]
 pub mod ws;

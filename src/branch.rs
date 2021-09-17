@@ -3,10 +3,19 @@ use regex::Regex;
 use futures::future::FutureExt;
 use crate::{
     additional::Additional,
-    CoreFn, LayerFn, WebsocketFn, Extractor, Callback, Pipeline,
-    http::{Method, Request, Response, MethodHandler},
-    ws::{WebSocketWriter, WebSocketReader}
+    CoreFn, LayerFn, Extractor, Callback, Pipeline,
+    http::{Method, Request, Response, MethodHandler}
 };
+#[cfg(feature = "ws")]
+use crate::WebSocketFn;
+#[cfg(feature = "ws")]
+use crate::ws::{WebSocketWriter, WebSocketReader};
+#[cfg(feature = "demon")]
+use apocalypse::{Demon, Gate};
+#[cfg(feature = "demon")]
+use crate::{WebSocketDemonFn, Error};
+#[cfg(feature = "demon")]
+use tokio::net::tcp::OwnedReadHalf;
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -69,8 +78,12 @@ pub struct Branch<T> {
     files_callback: Option<Arc<CoreFn<T>>>,
     /// Layer functions on this branch
     layers: Vec<Arc<LayerFn<T>>>,
-    /// And last but not least, websocket endpoint
-    websocket_callback: Option<Arc<WebsocketFn>>
+    /// Websocket endpoint, if enabled
+    #[cfg(feature = "ws")]
+    websocket_callback: Option<Arc<WebSocketFn>>,
+    /// And last but not least, demon websocket endpoint
+    #[cfg(feature = "demon")]
+    websocket_demon_callback: Option<Arc<WebSocketDemonFn>>
 }
 
 impl<T> std::fmt::Display for Branch<T> {
@@ -120,7 +133,10 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback: None,
             default_callback: None,
             files_callback: None,
+            #[cfg(feature = "ws")]
             websocket_callback: None,
+            #[cfg(feature = "demon")]
+            websocket_demon_callback: None,
             layers: vec![]
         };
         let (base, rest_branch) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
@@ -319,6 +335,8 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback,
             default_callback,
             files_callback,
+            #[cfg(feature = "ws")]
+            websocket_callback,
             ..
         } = other;
         // If an exact match is found, we merge
@@ -372,6 +390,12 @@ impl<T: Sync + Send> Branch<T> {
         // Priority for the lhs branch
         if self.files_callback.is_none() {
             self.files_callback = files_callback;
+        }
+
+        #[cfg(feature = "ws")]
+        // Priority for the lhs branch
+        if self.websocket_callback.is_none() {
+            self.websocket_callback = websocket_callback;
         }
     }
 
@@ -470,39 +494,94 @@ impl<T: Sync + Send> Branch<T> {
     /// 
     /// #[async_trait::async_trait]
     /// impl WebSocketReader for Example {
-    ///     async fn on_open(&mut self) {
-    ///         // ... do something
-    ///     }
-    /// 
     ///     async fn on_message(&mut self, message: Message) {
-    ///         // ... do something
-    ///     }
-    /// 
-    ///     async fn on_close(&mut self) {
     ///         // ... do something
     ///     }
     /// }
     /// 
-    /// async fn deal_with_ws(web_socket_writer: WebSocketWriter) -> Example {
+    /// async fn factory(web_socket_writer: WebSocketWriter) -> Example {
     ///     Example::new(web_socket_writer)
     /// }
     /// 
     /// #[tokio::main]
     /// async fn main() {
     ///     let branch: Branch<()> = Branch::new("/")
-    ///         .nest(Branch::new("/ws").websocket(deal_with_ws))
+    ///         .nest(Branch::new("/ws").websocket(factory))
     ///         .files("./static")
     ///         .defaults_to_file("./static/index.html");
     ///     let server = Server::builder(branch).build().unwrap();
     ///     server.run("127.0.0.1:8000").await.unwrap();
     /// }
     /// ```
+    #[cfg(feature = "ws")]
     pub fn websocket<W: 'static + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter) -> A + Send + Sync>(mut self, handler: F) -> Self {
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
-        top_branch.websocket_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter| handler(websocket).map(|wsr| -> Box<dyn WebSocketReader>{
+        top_branch.websocket_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter| handler(websocket).map(|wsr| -> Box<dyn WebSocketReader> {
             Box::new(wsr)
         }).boxed())));
+        self
+    }
+
+    /// Callback handler for demon websocket connections
+    ///
+    /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) and `Demon` (from the [apocalypse](https://docs.rs/apocalypse) crate) traits for one structure.
+    /// 
+    /// ```rust,no_run
+    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, Message}, Server, Branch};
+    /// use apocalypse::{Demon, Gate};
+    /// 
+    /// struct Example{
+    ///     web_socket_writer: WebSocketWriter
+    /// }
+    /// 
+    /// impl Example {
+    ///     fn new(web_socket_writer: WebSocketWriter) -> Example {
+    ///         Example{web_socket_writer}
+    ///     }
+    /// }
+    /// 
+    /// #[async_trait::async_trait]
+    /// impl WebSocketReader for Example {
+    ///     async fn on_message(&mut self, message: Message) {
+    ///         // ... do something
+    ///     }
+    /// }
+    ///
+    /// #[async_trait::async_trait]
+    /// impl Demon for Example {
+    ///     type Input = String;
+    ///     type Output = String;
+    ///     async fn handle(&mut self, message: Self::Input) -> Self::Output {
+    ///         format!("{}", message)
+    ///     }
+    /// }
+    /// 
+    /// // Demon Factory
+    /// async fn factory(web_socket_writer: WebSocketWriter, gate: Gate) -> Example {
+    ///     Example{web_socket_writer}
+    /// }
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let branch: Branch<()> = Branch::new("/")
+    ///         .nest(Branch::new("/ws").demon(factory))
+    ///         .files("./static")
+    ///         .defaults_to_file("./static/index.html");
+    ///     // ... cast the gate and so on
+    /// }
+    /// ```
+    #[cfg(feature = "demon")]
+    pub fn demon<I: 'static + Send, O: 'static + Send, W: 'static + Demon<Input = I, Output = O> + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter, Gate) -> A + Send + Sync>(mut self, handler: F) -> Self {
+        let source = self.source.clone();
+        let top_branch = self.get_branch(source).unwrap();
+        top_branch.websocket_demon_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter, gate: Gate, read_stream: OwnedReadHalf| {
+            let gate_clone = gate.clone();
+            let f: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> = handler(websocket, gate).then(|demon| async move {
+                gate_clone.spawn_ws(demon, read_stream).await.map_err(|e| Error::Apocalypse(e)).map(|_| ())
+            }).boxed();
+            f
+        })));
         self
     }
 
@@ -519,7 +598,10 @@ impl<T: Sync + Send> Branch<T> {
             default_callback: self.default_callback,
             files_callback: self.files_callback,
             layers: self.layers,
-            websocket_callback: self.websocket_callback
+            #[cfg(feature = "ws")]
+            websocket_callback: self.websocket_callback,
+            #[cfg(feature = "demon")]
+            websocket_demon_callback: self.websocket_demon_callback
         }
     }
 
@@ -590,12 +672,16 @@ pub(crate) struct PureBranch<T> {
     default_callback: Option<Arc<CoreFn<T>>>,
     files_callback: Option<Arc<CoreFn<T>>>,
     layers: Vec<Arc<LayerFn<T>>>,
-    websocket_callback: Option<Arc<WebsocketFn>>
+    #[cfg(feature = "ws")]
+    websocket_callback: Option<Arc<WebSocketFn>>,
+    #[cfg(feature = "demon")]
+    websocket_demon_callback: Option<Arc<WebSocketDemonFn>>
 }
 
 impl<T> PureBranch<T> {
     /// Returns a web socket handler, if any
-    pub(crate) fn websocket_handler<A: AsRef<str>>(&self, trail: A) -> Option<Arc<WebsocketFn>> {
+    #[cfg(feature = "ws")]
+    pub(crate) fn websocket_handler<A: AsRef<str>>(&self, trail: A) -> Option<Arc<WebSocketFn>> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
         
@@ -629,6 +715,48 @@ impl<T> PureBranch<T> {
                 // Finally, if there is a variable, we reply (constant time)
                 if let Some((_id, branch)) = &self.variable_branch {
                     result = branch.websocket_handler(rest);
+                }
+            }
+        }
+        result
+    }
+
+    /// Returns a web socket demon handler, if any
+    #[cfg(feature = "demon")]
+    pub(crate) fn websocket_demon_handler<A: AsRef<str>>(&self, trail: A) -> Option<Arc<WebSocketDemonFn>> {
+        // Tokenizamos la cadena
+        let trimmed_trail = trail.as_ref().trim_start_matches("/");
+        
+        let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
+            (base.to_string(), rest.to_string())
+        } else {
+            // Only one token here
+            if trimmed_trail.is_empty() {
+                return self.websocket_demon_callback.clone();
+            } else {
+                (trimmed_trail.to_string(), "".to_string())
+            }
+        };
+
+        // Now we check if any nested branch has something
+        let mut result = None;
+        
+        // First, exact matching through hash lookup
+        if let Some(branch) = self.exact_branches.get(&base) {
+            result = branch.websocket_demon_handler(rest);
+        } else {
+            // Now, O(n) regex pattern matching
+            for (pattern, branch) in self.pattern_branches.iter() {
+                if pattern.is_match(&base) {
+                    result = branch.websocket_demon_handler(&rest);
+                    break;
+                }
+            }
+
+            if result.is_none() {
+                // Finally, if there is a variable, we reply (constant time)
+                if let Some((_id, branch)) = &self.variable_branch {
+                    result = branch.websocket_demon_handler(rest);
                 }
             }
         }

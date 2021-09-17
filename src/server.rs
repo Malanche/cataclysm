@@ -2,7 +2,11 @@ use tokio::{
     sync::Semaphore,
     net::{TcpListener, TcpStream}
 };
-use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, ws::{WebSocketThread, WebSocketWriter}, Error};
+use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
+#[cfg(feature = "ws")]
+use crate::ws::{WebSocketThread, WebSocketWriter};
+#[cfg(feature = "demon")]
+use apocalypse::Gate;
 use log::{info, error};
 use std::sync::{Arc};
 use ring::{hmac::{self, Key}, rand};
@@ -18,7 +22,9 @@ pub struct ServerBuilder<T> {
     shared: Option<Shared<T>>,
     secret: Option<Key>,
     log_string: Option<String>,
-    max_connections: usize
+    max_connections: usize,
+    #[cfg(feature = "demon")]
+    gate: Option<Gate>
 }
 
 impl<T: Sync + Send> ServerBuilder<T> {
@@ -36,7 +42,9 @@ impl<T: Sync + Send> ServerBuilder<T> {
             shared: None,
             secret: None,
             log_string: None,
-            max_connections: MAX_CONNECTIONS
+            max_connections: MAX_CONNECTIONS,
+            #[cfg(feature = "demon")]
+            gate: None
         }
     }
 
@@ -134,6 +142,54 @@ impl<T: Sync + Send> ServerBuilder<T> {
         self
     }
 
+    /// Sets up a gate for demon spawning
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::{
+    ///     Server, Branch, http::{Response, Method},
+    ///     ws::{WebSocketWriter, WebSocketReader, Message}
+    /// };
+    /// use apocalypse::{Hell, Demon, Gate};
+    /// // Demon + WebSocketReader strcut
+    /// struct Example{}
+    /// #[async_trait::async_trait]
+    /// impl Demon for Example {
+    ///     type Input = String;
+    ///     type Output = String;
+    ///     async fn handle(&mut self, message: Self::Input) -> Self::Output {
+    ///         format!("{}", message)
+    ///     }
+    /// }
+    /// #[async_trait::async_trait]
+    /// impl WebSocketReader for Example {
+    ///     async fn on_message(&mut self, message: Message) {
+    ///         // ... do something
+    ///     }
+    /// }
+    /// // Demon Factory
+    /// async fn factory(socket_writer: WebSocketWriter, gate: Gate) -> Example {
+    ///     Example{}
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let branch: Branch<()> = Branch::new("/")
+    ///         .with(Method::Get.to(|| async {Response::ok()}))
+    ///         .demon(factory);
+    ///     // We do the hell thingy
+    ///     let hell = Hell::new();
+    ///     let (gate, _jh) = hell.fire().await.unwrap();
+    ///     // Now we configure the server
+    ///     let server = Server::builder(branch).gate(gate).build().unwrap();
+    ///     // ...
+    /// }
+    /// ```
+    #[cfg(feature = "demon")]
+    pub fn gate(mut self, gate: Gate) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
     /// Builds the server
     ///
     /// ```rust,no_run
@@ -154,17 +210,19 @@ impl<T: Sync + Send> ServerBuilder<T> {
     ///     server.run("127.0.0.1:8000").await.unwrap();
     /// }
     /// ```
-    pub fn build(self) -> Result<Server<T>, Error> {
+    pub fn build(self) -> Result<Arc<Server<T>>, Error> {
         let rng = rand::SystemRandom::new();
-        Ok(Server {
+        Ok(Arc::new(Server {
             pure_branch: Arc::new(self.branch.purify()),
             additional: Arc::new(Additional {
                 shared: self.shared,
                 secret: Arc::new(Key::generate(hmac::HMAC_SHA256, &rng).map_err(|_| Error::Ring)?)
             }),
             log_string: Arc::new(self.log_string),
-            max_connections: Arc::new(Semaphore::new(self.max_connections))
-        })
+            max_connections: Arc::new(Semaphore::new(self.max_connections)),
+            #[cfg(feature = "demon")]
+            gate: Arc::new(self.gate.ok_or_else(|| Error::MissingGate)?)
+        }))
     }
 }
 
@@ -175,7 +233,9 @@ pub struct Server<T> {
     pure_branch: Arc<PureBranch<T>>,
     additional: Arc<Additional<T>>,
     log_string: Arc<Option<String>>,
-    max_connections: Arc<Semaphore>
+    max_connections: Arc<Semaphore>,
+    #[cfg(feature = "demon")]
+    gate: Arc<Gate>
 }
 
 impl<T: 'static + Sync + Send> Server<T> {
@@ -184,7 +244,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         ServerBuilder::new(branch)
     }
 
-    pub async fn run<S: AsRef<str>>(&self, socket: S) -> Result<(), Error> {
+    pub async fn run<S: AsRef<str>>(self: &Arc<Self>, socket: S) -> Result<(), Error> {
         let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
 
         info!("Cataclysm ongoing \u{26c8}");
@@ -197,19 +257,17 @@ impl<T: 'static + Sync + Send> Server<T> {
                     
                     match listener.accept().await {
                         Ok((socket, addr)) => {
-                            let pure_branch_clone = self.pure_branch.clone();
-                            let additional = self.additional.clone();
-                            let log_string = self.log_string.clone();
-                            let max_connections = self.max_connections.clone();
+                            let server = Arc::clone(self);
+                            
                             tokio::spawn(async move {
-                                match Server::<T>::dispatch(socket, addr, additional, log_string, pure_branch_clone).await {
+                                match server.dispatch(socket, addr).await {
                                     Ok(_) => (),
                                     Err(e) => {
                                         error!("{}", e);
                                     }
                                 }
                                 // We set up back the permits
-                                max_connections.add_permits(1);
+                                //server.add_permits(1);
                             });
                         },
                         Err(e) => {
@@ -223,38 +281,6 @@ impl<T: 'static + Sync + Send> Server<T> {
             }
         };
         Ok(())
-        /*
-        let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
-
-        info!("Cataclysm ongoing \u{26c8}");
-        loop {
-            // We need a fused future for the select macro
-            tokio::select! {
-                res = listener.accept() => match res {
-                    Ok((socket, addr)) => {
-                        let pure_branch_clone = self.pure_branch.clone();
-                        let additional = self.additional.clone();
-                        let log_string = self.log_string.clone();
-                        tokio::spawn(async move {
-                            match Server::<T>::dispatch(socket, addr, additional, log_string, pure_branch_clone).await {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    error!("{}", e);
-                                }
-                            }
-                        });
-                    },
-                    Err(e) => {
-                        error!("{}", e);
-                    }
-                },
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Shutting down server");
-                    break Ok(())
-                }
-            };
-        }
-        */
     }
 
     /// Deals with the read part of the socket stream
@@ -337,7 +363,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
     }
 
-    async fn dispatch(socket: TcpStream, addr: std::net::SocketAddr, additional: Arc<Additional<T>>, log_string: Arc<Option<String>>, pure_branch: Arc<PureBranch<T>>) -> Result<(), Error> {
+    async fn dispatch(self: Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr) -> Result<(), Error> {
         // let mut second_part = false;
         let request_bytes = match Server::<T>::dispatch_read(&socket).await? {
             Some(b) => b,
@@ -353,14 +379,31 @@ impl<T: 'static + Sync + Send> Server<T> {
         };
 
         // The request could be an upgrade request for a websockets connection
+        #[cfg(feature = "ws")]
         if request.headers.get("Upgrade").map(|v| v == "websocket").unwrap_or(false) && request.headers.get("Connection").map(|v| v == "Upgrade" || v == "keep-alive, Upgrade").unwrap_or(false) {
             if let Some(nonce) = request.headers.get("Sec-WebSocket-Key") {
                 // According to RFC4122
                 let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
                 let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
 
+                // We check if there is a demon handler
+                #[cfg(feature = "demon")]
+                match self.pure_branch.websocket_demon_handler(request.path()) {
+                    Some(handler) => {
+                        let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
+                        Server::<T>::dispatch_write(&socket, response).await?;
+                        let (owned_read, owned_write) = socket.into_split();
+                        let web_socket_writer = WebSocketWriter::new(owned_write);
+                        handler(web_socket_writer, (*self.gate).clone(), owned_read).await?;
+                        return Ok(())
+                    },
+                    None => {
+                        // Nothing found, we go to the normal websocket handler
+                    }
+                }
+
                 // We request a websocket handler
-                match pure_branch.websocket_handler(request.path()) {
+                match self.pure_branch.websocket_handler(request.path()) {
                     Some(handler) => {
                         let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
                         Server::<T>::dispatch_write(&socket, response).await?;
@@ -375,25 +418,26 @@ impl<T: 'static + Sync + Send> Server<T> {
             } else {
                 Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
             }
-        } else {
-            request.addr = Some(addr);
-            
-            // The method will take the request, and modify particularly the "variable count" variable
-            let response = match pure_branch.pipeline(&mut request) {
-                Some(pipeline) => {
-                    match pipeline {
-                        Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, additional),
-                        Pipeline::Core(core_fn) => core_fn(request.clone(), additional)
-                    }.await
-                },
-                None => Response::not_found()
-            };
-            if let Some(log_string) = &*log_string {
-                info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
-            }
-            Server::<T>::dispatch_write(&socket, response).await?;
-            //socket.shutdown();
+            return Ok(())
         }
+
+        request.addr = Some(addr);
+        
+        // The method will take the request, and modify particularly the "variable count" variable
+        let response = match self.pure_branch.pipeline(&mut request) {
+            Some(pipeline) => {
+                match pipeline {
+                    Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
+                    Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
+                }.await
+            },
+            None => Response::not_found()
+        };
+        if let Some(log_string) = &*self.log_string {
+            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+        }
+        Server::<T>::dispatch_write(&socket, response).await?;
+            //socket.shutdown();
         Ok(())
     }
 }

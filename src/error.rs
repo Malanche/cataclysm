@@ -11,10 +11,13 @@ pub enum Error {
     ExtractionSE(String),
     /// Indicates a Ring error
     Ring,
-    /// Indicate sthat the connection was closed abruptly
-    ConnectionReset,
-    /// Indicates a websockets Incomplete Message
-    Incomplete,
+    /// Indicates that no gate was provided to spawn demons
+    #[cfg(feature = "demon")]
+    MissingGate,
+    /// Internal error in apocalypse
+    #[cfg(feature = "demon")]
+    Apocalypse(apocalypse::Error),
+    /// Dummy error, needs to be removed
     Dummy
 }
 
@@ -26,8 +29,10 @@ impl std::fmt::Display for Error {
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
             Error::Ring => format!("ring error"),
-            Error::ConnectionReset => format!("connection reset by peer"),
-            Error::Incomplete => format!("incomplete frame message in ws connection"),
+            #[cfg(feature = "demon")]
+            Error::MissingGate => format!("for demon spawning, a gate must be provided to the server through the builder"),
+            #[cfg(feature = "demon")]
+            Error::Apocalypse(inner_error) => format!("apocalypse error, {}", inner_error),
             Error::Dummy => format!("Dummy error")
         };
         write!(formatter, "{}", content)
