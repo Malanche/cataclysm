@@ -267,7 +267,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                                     }
                                 }
                                 // We set up back the permits
-                                //server.add_permits(1);
+                                server.max_connections.add_permits(1);
                             });
                         },
                         Err(e) => {
@@ -363,7 +363,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
     }
 
-    async fn dispatch(self: Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr) -> Result<(), Error> {
+    async fn dispatch(self: &Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr) -> Result<(), Error> {
         // let mut second_part = false;
         let request_bytes = match Server::<T>::dispatch_read(&socket).await? {
             Some(b) => b,
