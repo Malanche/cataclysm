@@ -58,8 +58,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// // Receives a string, and concatenates the shared suffix
     /// async fn index(path: Path<(String,)>, shared: Shared<String>) -> Response {
     ///     let (prefix,) = path.into_inner();
-    ///     let suffix = shared.into_inner();
-    ///     Response::ok().body(format!("{}{}", prefix, suffix))
+    ///     Response::ok().body(format!("{}{}", prefix, *shared))
     /// }
     /// 
     /// #[tokio::main]

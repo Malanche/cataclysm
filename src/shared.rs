@@ -1,11 +1,21 @@
 use crate::{Extractor, Error, Additional, http::{Request}};
 use std::sync::Arc;
+use std::ops::{Deref};
 
 /// Wrapper around data to be shared in the server
 ///
 /// The main use for this structure is to work as an extractor in the server callbacks to access shared data. An example can be found in the ServerBuilder's [share](crate::ServerBuilder::share).
 pub struct Shared<T> {
     inner: Arc<T>
+}
+
+// Convenience deref and deref mut
+impl<T> Deref for Shared<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl<T> Clone for Shared<T> {
