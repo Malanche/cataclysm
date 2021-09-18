@@ -34,6 +34,12 @@ impl Session {
         self.values.get(key.as_ref())
     }
 
+    /// Clears all values in the session
+    pub fn clear(&mut self) {
+        self.changed = true;
+        self.values.clear();
+    }
+
     /// Applies all the changes of the session to the response.
     ///
     /// It is not the most elegant solution, but soon a new one will be worked out to apply the session changes to the response (probably using layers).
