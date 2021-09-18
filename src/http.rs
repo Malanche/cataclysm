@@ -4,6 +4,7 @@ pub use self::request::{Request};
 pub use self::path::{Path};
 pub use self::multipart::{Multipart, File};
 pub use self::query::Query;
+pub use self::json::Json;
 pub(crate) use self::mime::MIME_TYPES;
 
 mod method;
@@ -12,4 +13,5 @@ mod request;
 mod path;
 mod multipart;
 mod query;
+mod json;
 mod mime;
