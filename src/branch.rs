@@ -7,9 +7,7 @@ use crate::{
     http::{Method, Request, Response, MethodHandler}
 };
 #[cfg(feature = "ws")]
-use crate::WebSocketFn;
-#[cfg(feature = "ws")]
-use crate::ws::{WebSocketWriter, WebSocketReader};
+use crate::{WebSocketFn, ws::{WebSocketWriter, WebSocketReader, WebSocketFactory}};
 #[cfg(feature = "demon")]
 use apocalypse::{Demon, Gate};
 #[cfg(feature = "demon")]
@@ -31,7 +29,7 @@ enum BranchKind {
 
 /// ## Main cataclysm structure for route handling
 ///
-/// Branches are cataclysm's main building block. It is a really simple pattern matching system, with the following priorities. They are named branches to avoid conflict with the [Branch](crate::Branch) extractor.
+/// Branches are cataclysm's main building block. It is a really simple pattern matching system, with the following priorities. They are named branches to avoid conflict with the [Path](crate::http::Path) extractor.
 ///
 /// 1. Exact matching
 /// 2. Pattern matching
@@ -59,6 +57,15 @@ enum BranchKind {
 /// // matches any route that contains "/hello/{:variable}"
 /// let branch: Branch<()> = Branch::new("/hello/{:variable}");
 /// ```
+///
+/// There is an important thing to note about most methods of this structure. When you create a branch with multiple parts in the path, a tree gets spawned containing each token in the path, however, methods like `layer`, `nest`, and `with` operatoe on the top-level-token of the path, i.e., if you create a branch like this
+///
+/// ```rust,no_run
+/// # use cataclysm::Branch;
+/// let branch: Branch<()> = Branch::new("/path/with/many/tokens");
+/// ```
+///
+/// And then you execute the `with` method, the callback you provide will reply only to `/path/with/many/tokens`. 
 pub struct Branch<T> {
     /// Exact match branches
     exact_branches: HashMap<String, Branch<T>>,
@@ -477,10 +484,11 @@ impl<T: Sync + Send> Branch<T> {
 
     /// Callback handler for websocket connections
     ///
-    /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) trait for one structure.
+    /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) trait for one structure, and the [WebSocketFactory](crate::ws::WebSocketFactory) trait for another.
     /// 
     /// ```rust,no_run
-    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, Message}, Server, Branch};
+    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, WebSocketFactory, Message}, Server, Branch};
+    /// use std::sync::Arc;
     /// 
     /// struct Example{
     ///     web_socket_writer: WebSocketWriter
@@ -498,15 +506,20 @@ impl<T: Sync + Send> Branch<T> {
     ///         // ... do something
     ///     }
     /// }
-    /// 
-    /// async fn factory(web_socket_writer: WebSocketWriter) -> Example {
-    ///     Example::new(web_socket_writer)
+    ///
+    /// struct Factory{} 
+    ///
+    /// #[async_trait::async_trait]
+    /// impl WebSocketFactory<Example> for Factory {
+    ///     async fn create(self: Arc<Self>, web_socket_writer: WebSocketWriter) -> Example {
+    ///         Example::new(web_socket_writer)
+    ///     }
     /// }
     /// 
     /// #[tokio::main]
     /// async fn main() {
     ///     let branch: Branch<()> = Branch::new("/")
-    ///         .nest(Branch::new("/ws").websocket(factory))
+    ///         .nest(Branch::new("/ws").websocket_factory(Factory{}))
     ///         .files("./static")
     ///         .defaults_to_file("./static/index.html");
     ///     let server = Server::builder(branch).build().unwrap();
@@ -514,12 +527,13 @@ impl<T: Sync + Send> Branch<T> {
     /// }
     /// ```
     #[cfg(feature = "ws")]
-    pub fn websocket<W: 'static + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter) -> A + Send + Sync>(mut self, handler: F) -> Self {
+    pub fn websocket_factory<W: 'static + WebSocketReader, F: 'static + WebSocketFactory<W> + Send + Sync>(mut self, factory: F) -> Self {
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
-        top_branch.websocket_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter| handler(websocket).map(|wsr| -> Box<dyn WebSocketReader> {
-            Box::new(wsr)
-        }).boxed())));
+        let factory = Arc::new(factory);
+        top_branch.websocket_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter| {
+            factory.clone().create(websocket).map(|w| -> Box<dyn WebSocketReader> {Box::new(w)}).boxed()
+        })));
         self
     }
 
@@ -528,7 +542,8 @@ impl<T: Sync + Send> Branch<T> {
     /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) and `Demon` (from the [apocalypse](https://docs.rs/apocalypse) crate) traits for one structure.
     /// 
     /// ```rust,no_run
-    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, Message}, Server, Branch};
+    /// use cataclysm::{ws::{WebSocketWriter, WebSocketReader, WebSocketFactory, Message}, Server, Branch};
+    /// use std::sync::Arc;
     /// use apocalypse::{Demon, Gate};
     /// 
     /// struct Example{
@@ -557,28 +572,36 @@ impl<T: Sync + Send> Branch<T> {
     ///     }
     /// }
     /// 
-    /// // Demon Factory
-    /// async fn factory(web_socket_writer: WebSocketWriter, gate: Gate) -> Example {
-    ///     Example{web_socket_writer}
+    /// struct Factory{} 
+    ///
+    /// #[async_trait::async_trait]
+    /// impl WebSocketFactory<Example> for Factory {
+    ///     async fn create(self: Arc<Self>, web_socket_writer: WebSocketWriter) -> Example {
+    ///         Example::new(web_socket_writer)
+    ///     }
     /// }
     /// 
     /// #[tokio::main]
     /// async fn main() {
     ///     let branch: Branch<()> = Branch::new("/")
-    ///         .nest(Branch::new("/ws").demon(factory))
+    ///         .nest(Branch::new("/demon").demon_factory(Factory{}))
     ///         .files("./static")
     ///         .defaults_to_file("./static/index.html");
     ///     // ... cast the gate and so on
     /// }
     /// ```
     #[cfg(feature = "demon")]
-    pub fn demon<I: 'static + Send, O: 'static + Send, W: 'static + Demon<Input = I, Output = O> + WebSocketReader, A: 'static + Future<Output = W> + Send, F: 'static + Fn(WebSocketWriter, Gate) -> A + Send + Sync>(mut self, handler: F) -> Self {
+    pub fn demon_factory<I: 'static + Send, O: 'static + Send, W: 'static + Demon<Input = I, Output = O> + WebSocketReader, F: 'static + WebSocketFactory<W> + Send + Sync>(mut self, factory: F) -> Self {
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
+        let factory = Arc::new(factory);
         top_branch.websocket_demon_callback = Some(Arc::new(Box::new(move |websocket: WebSocketWriter, gate: Gate, read_stream: OwnedReadHalf| {
             let gate_clone = gate.clone();
-            let f: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> = handler(websocket, gate).then(|demon| async move {
-                gate_clone.spawn_ws(demon, read_stream).await.map_err(|e| Error::Apocalypse(e)).map(|_| ())
+            let f: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> = factory.clone().create(websocket).then(|demon| async move {
+                log::debug!("cata spawning demon!");
+                let _ = gate_clone.spawn_ws(demon, read_stream).await.map_err(|e| Error::Apocalypse(e)).map(|_| ());
+                log::debug!("cata spawned");
+                Ok(())
             }).boxed();
             f
         })));

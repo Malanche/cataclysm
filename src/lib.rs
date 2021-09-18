@@ -38,9 +38,9 @@ mod additional;
 
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 #[cfg(feature = "ws")]
-pub use self::metafunctions::{WebSocketFn};
+pub(crate) use self::metafunctions::{WebSocketFn};
 #[cfg(feature = "demon")]
-pub use self::metafunctions::{WebSocketDemonFn};
+pub(crate) use self::metafunctions::{WebSocketDemonFn};
 mod metafunctions;
 
 pub use self::session::Session;

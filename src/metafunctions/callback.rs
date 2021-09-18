@@ -39,6 +39,7 @@ pub type LayerFn<T> = Box<dyn Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) 
 /// Type representing a websocket handler function
 #[cfg(feature = "ws")]
 pub type WebSocketFn = Box<dyn Fn(WebSocketWriter) -> Pin<Box<dyn Future<Output = Box<dyn WebSocketReader>> + Send>> + Send + Sync>;
+/// Type representing a websocket-demon handler function
 #[cfg(feature = "demon")]
 pub type WebSocketDemonFn = Box<dyn Fn(WebSocketWriter, Gate, OwnedReadHalf) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> + Send + Sync>;
 

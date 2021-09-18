@@ -23,6 +23,7 @@ pub struct ServerBuilder<T> {
     secret: Option<Key>,
     log_string: Option<String>,
     max_connections: usize,
+    timeout: std::time::Duration,
     #[cfg(feature = "demon")]
     gate: Option<Gate>
 }
@@ -43,6 +44,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
             secret: None,
             log_string: None,
             max_connections: MAX_CONNECTIONS,
+            timeout: std::time::Duration::from_millis(15_000),
             #[cfg(feature = "demon")]
             gate: None
         }
@@ -131,7 +133,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// Sets up a maximum number of connections for the server to be dealt with
     ///
     /// ```rust,no_run
-    /// # use cataclysm::{Server, Branch, Shared, http::{Response, Method, Path}};
+    /// # use cataclysm::{Server, Branch, http::{Response, Method}};
     /// // Tree structure
     /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
     /// // Now we configure the server
@@ -142,48 +144,24 @@ impl<T: Sync + Send> ServerBuilder<T> {
         self
     }
 
-    /// Sets up a gate for demon spawning
+    /// Sets up a custom timeout for http requests to be finished
     ///
     /// ```rust,no_run
-    /// use cataclysm::{
-    ///     Server, Branch, http::{Response, Method},
-    ///     ws::{WebSocketWriter, WebSocketReader, Message}
-    /// };
-    /// use apocalypse::{Hell, Demon, Gate};
-    /// // Demon + WebSocketReader strcut
-    /// struct Example{}
-    /// #[async_trait::async_trait]
-    /// impl Demon for Example {
-    ///     type Input = String;
-    ///     type Output = String;
-    ///     async fn handle(&mut self, message: Self::Input) -> Self::Output {
-    ///         format!("{}", message)
-    ///     }
-    /// }
-    /// #[async_trait::async_trait]
-    /// impl WebSocketReader for Example {
-    ///     async fn on_message(&mut self, message: Message) {
-    ///         // ... do something
-    ///     }
-    /// }
-    /// // Demon Factory
-    /// async fn factory(socket_writer: WebSocketWriter, gate: Gate) -> Example {
-    ///     Example{}
-    /// }
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let branch: Branch<()> = Branch::new("/")
-    ///         .with(Method::Get.to(|| async {Response::ok()}))
-    ///         .demon(factory);
-    ///     // We do the hell thingy
-    ///     let hell = Hell::new();
-    ///     let (gate, _jh) = hell.fire().await.unwrap();
-    ///     // Now we configure the server
-    ///     let server = Server::builder(branch).gate(gate).build().unwrap();
-    ///     // ...
-    /// }
+    /// # use cataclysm::{Server, Branch, http::{Response, Method}};
+    /// use std::time::Duration;
+    /// // Tree structure
+    /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
+    /// // Now we configure the server
+    /// let server = Server::builder(branch).timeout(Duration::from_millis(5_000)).build().unwrap();
     /// ```
+    pub fn timeout(mut self, duration: std::time::Duration) -> Self {
+        self.timeout = duration;
+        self
+    }
+
+    /// Sets up a gate for demon spawning
+    ///
+    /// See the [demon_factory](crate::Branch::demon_factory) documentation from the [Branch](crate::Branch) structure for more details about this function.
     #[cfg(feature = "demon")]
     pub fn gate(mut self, gate: Gate) -> Self {
         self.gate = Some(gate);
@@ -220,6 +198,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
             }),
             log_string: Arc::new(self.log_string),
             max_connections: Arc::new(Semaphore::new(self.max_connections)),
+            timeout: Arc::new(self.timeout),
             #[cfg(feature = "demon")]
             gate: Arc::new(self.gate.ok_or_else(|| Error::MissingGate)?)
         }))
@@ -234,6 +213,7 @@ pub struct Server<T> {
     additional: Arc<Additional<T>>,
     log_string: Arc<Option<String>>,
     max_connections: Arc<Semaphore>,
+    timeout: Arc<std::time::Duration>,
     #[cfg(feature = "demon")]
     gate: Arc<Gate>
 }
@@ -260,10 +240,15 @@ impl<T: 'static + Sync + Send> Server<T> {
                             let server = Arc::clone(self);
                             
                             tokio::spawn(async move {
-                                match server.dispatch(socket, addr).await {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        error!("{}", e);
+                                tokio::select! {
+                                    res = server.dispatch(socket, addr) => match res {
+                                        Ok(_) => (),
+                                        Err(e) => {
+                                            error!("{}", e);
+                                        }
+                                    },
+                                    _ = tokio::time::sleep(*server.timeout) => {
+                                        log::debug!("timeout for http response");
                                     }
                                 }
                                 // We set up back the permits
@@ -294,7 +279,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             socket.readable().await.map_err(|e| Error::Io(e))?;
             
             // being stored in the async task.
-            let mut buf = [0; 8192];
+            let mut buf = [0; 8 * 1024];
 
             // Try to read data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.
