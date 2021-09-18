@@ -1,15 +1,31 @@
 use crate::{Extractor, Error, http::Request, branch::Tokenizable, additional::Additional};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::ops::{Deref, DerefMut};
 
 /// Token extractor from the path from a request
 ///
 /// The `Path` extractors allows for tuple extraction from a path with variable or regex components.
 pub struct Path<T>(pub T);
 
-impl<T> Path<T> {
+// Convenience deref implementation
+impl<P> Deref for Path<P> {
+    type Target = P;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<P> DerefMut for Path<P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<P> Path<P> {
     /// Retrieves the inner instance of the generic type
-    pub fn into_inner(self) -> T {
+    pub fn into_inner(self) -> P {
         self.0
     }
 }

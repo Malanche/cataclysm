@@ -4,8 +4,7 @@ use misc::SimpleLogger;
 mod misc;
 
 async fn index(path: Path<(String, i32)>) -> Response {
-    let path = path.into_inner();
-    Response::ok().body(format!("Hello {}, your id is {}!", path.0, path.1))
+    Response::ok().body(format!("Hello {}, your id is {}!", (*path).0, (*path).1))
 }
 
 #[tokio::main]

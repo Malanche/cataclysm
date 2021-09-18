@@ -10,7 +10,7 @@ struct QueryParams {
 }
 
 async fn index(query: Query<QueryParams>) -> Response {
-    Response::ok().body(format!("Hello, {}!", query.into_inner().name))
+    Response::ok().body(format!("Hello, {}!", (*query).name))
 }
 
 #[tokio::main]

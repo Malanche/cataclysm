@@ -1,6 +1,7 @@
 use crate::{Error, Additional, Extractor, http::Request};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::ops::{Deref, DerefMut};
 
 /// Query extractor
 ///
@@ -40,5 +41,20 @@ impl<T: Sync, Q: 'static + DeserializeOwned + Send> Extractor<T> for Query<Q> {
             // We will check if the Q could be deserialized from an empty string
             serde_qs::from_str::<Q>("")
         }.map(|q| Query(q)).map_err(|e| Error::ExtractionBR(format!("query deserialization failure, {}", e)))
+    }
+}
+
+// Convenience deref and deref mut
+impl<Q> Deref for Query<Q> {
+    type Target = Q;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<Q> DerefMut for Query<Q> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

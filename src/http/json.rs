@@ -1,6 +1,7 @@
 use crate::{Error, Additional, Extractor, http::Request};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::ops::{Deref, DerefMut};
 
 /// Json extractor
 ///
@@ -48,5 +49,19 @@ impl<T: Sync, J: 'static + DeserializeOwned + Send + Sync> Extractor<T> for Json
         } else {
             Err(Error::ExtractionBR(format!("missing header Content-Type, or incorrect content from it")))
         }
+    }
+}
+
+impl<J> Deref for Json<J> {
+    type Target = J;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<J> DerefMut for Json<J> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
