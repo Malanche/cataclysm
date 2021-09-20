@@ -50,7 +50,7 @@ pub trait Callback<A> {
 }
 
 // Callback implementation for empty tupple
-impl<F, R> Callback<()> for F where F: Fn() -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static{
+impl<F, R> Callback<()> for F where F: Fn() -> R, R: Future<Output = Response> + Send + 'static{
     fn invoke(&self, _args: ()) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
         self().boxed()
     }
@@ -59,14 +59,14 @@ impl<F, R> Callback<()> for F where F: Fn() -> R + Sync, R: Future<Output = Resp
 /// This macro implements the trait for a given indexed tuple
 macro_rules! callback_for_many {
     ($struct_name:ident $index:tt) => {
-        impl<F, R, $struct_name> Callback<($struct_name,)> for F where F: Fn($struct_name) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static {
+        impl<F, R, $struct_name> Callback<($struct_name,)> for F where F: Fn($struct_name) -> R, R: Future<Output = Response> + Send + 'static {
             fn invoke(&self, args: ($struct_name,)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self(args.$index).boxed()
             }
         }
     };
     ($($struct_name:ident $index:tt),+) => {
-        impl<F, R, $($struct_name),+> Callback<($($struct_name),+)> for F where F: Fn($($struct_name),+) -> R + Sync, R: Future<Output = Response> + Sync + Send + 'static {
+        impl<F, R, $($struct_name),+> Callback<($($struct_name),+)> for F where F: Fn($($struct_name),+) -> R, R: Future<Output = Response> + Send + 'static {
             fn invoke(&self, args: ($($struct_name),+)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self($(args.$index,)+).boxed()
             }
