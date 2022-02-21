@@ -72,7 +72,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// }
     /// ```
     ///
-    /// If you intend to share a mutable variable, consider using rust's [Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html), ad the shared value is already inside an [Arc](https://doc.rust-lang.org/std/sync/struct.Arc.html).
+    /// If you intend to share a mutable variable, consider using rust's [Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html), as the shared value is already inside an [Arc](https://doc.rust-lang.org/std/sync/struct.Arc.html).
     pub fn share(mut self, shared: T) -> ServerBuilder<T> {
         self.shared = Some(Shared::new(shared));
         self

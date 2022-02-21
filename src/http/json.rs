@@ -35,7 +35,7 @@ impl<J> Json<J> {
 
 impl<T: Sync, J: 'static + DeserializeOwned + Send + Sync> Extractor<T> for Json<J> {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if req.headers.get("Content-Type").map(|val| val == "application/json").unwrap_or(false) {
+        if req.headers.get("content-type").ok_or_else(|| req.headers.get("Content-Type")).map(|val| val == "application/json").unwrap_or(false) {
             match String::from_utf8(req.content.clone()) {
                 Ok(body) => {
                     serde_json::from_str::<J>(&body)
@@ -47,7 +47,7 @@ impl<T: Sync, J: 'static + DeserializeOwned + Send + Sync> Extractor<T> for Json
                 }
             }
         } else {
-            Err(Error::ExtractionBR(format!("missing header Content-Type, or incorrect content from it")))
+            Err(Error::ExtractionBR(format!("missing header content-type, or 'application/json' not found")))
         }
     }
 }
