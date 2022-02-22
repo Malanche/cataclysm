@@ -35,19 +35,24 @@ impl<J> Json<J> {
 
 impl<T: Sync, J: 'static + DeserializeOwned + Send + Sync> Extractor<T> for Json<J> {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if req.headers.get("content-type").ok_or_else(|| req.headers.get("Content-Type")).map(|val| val == "application/json").unwrap_or(false) {
-            match String::from_utf8(req.content.clone()) {
-                Ok(body) => {
-                    serde_json::from_str::<J>(&body)
-                        .map(|j| Json(j))
-                        .map_err(|e| Error::ExtractionBR(format!("json deserialization failure, {}", e)))
-                },
-                Err(e) => {
-                    Err(Error::ExtractionBR(format!("body encoding error, {}", e)))
+        let content_type_header = req.headers.get("content-type").or_else(|| req.headers.get("Content-Type"));
+        if let Some(content_type_header) = content_type_header {
+            if content_type_header == "application/json" {
+                match String::from_utf8(req.content.clone()) {
+                    Ok(body) => {
+                        serde_json::from_str::<J>(&body)
+                            .map(|j| Json(j))
+                            .map_err(|e| Error::ExtractionBR(format!("json deserialization failure, {}", e)))
+                    },
+                    Err(e) => {
+                        Err(Error::ExtractionBR(format!("body encoding error, {}", e)))
+                    }
                 }
+            } else {
+                Err(Error::ExtractionBR(format!("content-type header should be 'application/json' (found {}) for correct parsing", content_type_header)))
             }
         } else {
-            Err(Error::ExtractionBR(format!("missing header content-type, or 'application/json' not found")))
+            Err(Error::ExtractionBR(format!("missing header content-type (or Content-Type) required for json parsing")))
         }
     }
 }
