@@ -13,6 +13,7 @@ use ring::{hmac::{self, Key}, rand};
 
 // Default max connections for the server
 const MAX_CONNECTIONS: usize = 2_000;
+const RESPONSE_CHUNK_SIZE: usize = 4_096;
 
 /// Builder pattern for the server structure
 ///
@@ -334,16 +335,20 @@ impl<T: 'static + Sync + Send> Server<T> {
     
             // Try to write data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.
-            match socket.try_write(&response.serialize()) {
-            //match socket.try_write(b"Hola mundo\n") {
-                Ok(_n) => {
-                    break Ok(());
+            let serialized_response = response.serialize();
+            let chunks = serialized_response.chunks(RESPONSE_CHUNK_SIZE);
+            for chunk in chunks {
+                match socket.try_write(&chunk) {
+                    Ok(_n) => {
+                        //log::trace!("wrote {} bytes", n);
+                    }
+                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => return Err(Error::Io(e))
                 }
-                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
-                    continue;
-                }
-                Err(e) => break Err(Error::Io(e))
             }
+            return Ok(())
         }
     }
 

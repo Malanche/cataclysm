@@ -278,9 +278,13 @@ impl<T: Sync + Send> Branch<T> {
                             Ok(_) => (),
                             Err(_) => return Response::internal_server_error()
                         }
+                        log::debug!("serving file {}", fl_clone.display());
                         Response::ok().body(content).header("Content-Type", crate::http::MIME_TYPES.get(extension).map(|v| *v).unwrap_or("application/octet-stream"))
                     },
-                    Err(_) => Response::not_found()
+                    Err(_) => {
+                        log::debug!("file {} not found", fl_clone.display());
+                        Response::not_found()
+                    }
                 }
             }).boxed()
         });
