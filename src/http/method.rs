@@ -24,6 +24,12 @@ pub enum Method {
     Options
 }
 
+impl std::fmt::Display for Method {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(formatter, "{}", self.to_str())
+    }
+}
+
 impl Eq for Method{}
 
 /// Holds multiple methods to make callback management easier

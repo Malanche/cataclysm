@@ -125,6 +125,10 @@ async fn main() {
 
 As seen in the example, layer functions receive a `Request` and a boxed `Pipeline` enum. The `Pipeline` enum contains a nested structure of futures (the layers + the core handler), and has the `execute` to simplify things a bit. This function must return a `Pin<Box<_>>` future, so either use the `boxed` method from the `FutureExt` trait from the `futures` crate, or wrap it manually.
 
+## Full log feature
+
+If the `full_log` feature is activated, log function through the levels `Debug` and `Trace` will be provided. This might come in handy for debugging, but it is left optional as it might have a strong toll in performance.
+
 ### TODO
 
 - [ ] Regex with / cause problems in branch creation (fix with queue implementation for "{", "}" detection)

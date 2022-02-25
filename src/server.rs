@@ -7,13 +7,13 @@ use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Req
 use crate::ws::{WebSocketThread, WebSocketWriter};
 #[cfg(feature = "demon")]
 use apocalypse::Gate;
-use log::{info, error};
 use std::sync::{Arc};
 use ring::{hmac::{self, Key}, rand};
 
 // Default max connections for the server
 const MAX_CONNECTIONS: usize = 2_000;
 const RESPONSE_CHUNK_SIZE: usize = 4_096;
+const READ_CHUNK_SIZE: usize = 8_192;
 
 /// Builder pattern for the server structure
 ///
@@ -227,7 +227,7 @@ impl<T: 'static + Sync + Send> Server<T> {
     pub async fn run<S: AsRef<str>>(self: &Arc<Self>, socket: S) -> Result<(), Error> {
         let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
 
-        info!("Cataclysm ongoing \u{26c8}");
+        log::info!("Cataclysm ongoing \u{26c8}");
         // We need a fused future for the select macro
         tokio::select! {
             _ = async {
@@ -237,6 +237,8 @@ impl<T: 'static + Sync + Send> Server<T> {
                     
                     match listener.accept().await {
                         Ok((socket, addr)) => {
+                            #[cfg(feature = "full_log")]
+                            log::trace!("socket connection accepted");
                             let server = Arc::clone(self);
                             
                             tokio::spawn(async move {
@@ -244,7 +246,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                                     res = server.dispatch(socket, addr) => match res {
                                         Ok(_) => (),
                                         Err(e) => {
-                                            error!("{}", e);
+                                            log::error!("{}", e);
                                         }
                                     },
                                     _ = tokio::time::sleep(*server.timeout) => {
@@ -256,13 +258,13 @@ impl<T: 'static + Sync + Send> Server<T> {
                             });
                         },
                         Err(e) => {
-                            error!("{}", e);
+                            log::error!("{}", e);
                         }
                     }
                 }
             } => (),
             _ = tokio::signal::ctrl_c() => {
-                info!("Shutting down server");
+                log::info!("Shutting down server");
             }
         };
         Ok(())
@@ -270,7 +272,7 @@ impl<T: 'static + Sync + Send> Server<T> {
 
     /// Deals with the read part of the socket stream
     async fn dispatch_read(socket: &TcpStream) -> Result<Option<Vec<u8>>, Error> {
-        let mut request_bytes = Vec::with_capacity(8192);
+        let mut request_bytes = Vec::with_capacity(READ_CHUNK_SIZE);
         let mut expected_length = None;
         let mut header_size = 0;
         let mut request = None;
@@ -279,7 +281,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             socket.readable().await.map_err(|e| Error::Io(e))?;
             
             // being stored in the async task.
-            let mut buf = [0; 8 * 1024];
+            let mut buf = [0; READ_CHUNK_SIZE];
 
             // Try to read data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.
@@ -300,6 +302,8 @@ impl<T: 'static + Sync + Send> Server<T> {
 
                                 // We check now if there is a content size hint
                                 expected_length = r.headers.get("Content-Length").map(|v| v.parse::<usize>().ok()).flatten();
+                                #[cfg(feature = "full_log")]
+                                log::trace!("expecting to read {:?} bytes in request", expected_length);
                                 header_size = r.header_size;
                                 Some(r)
                             },
@@ -337,10 +341,15 @@ impl<T: 'static + Sync + Send> Server<T> {
             // if the readiness event is a false positive.
             let serialized_response = response.serialize();
             let chunks = serialized_response.chunks(RESPONSE_CHUNK_SIZE);
+            #[cfg(feature = "full_log")]
+            log::trace!("writting {} chunks of {} bytes each", chunks.len(), RESPONSE_CHUNK_SIZE);
             for chunk in chunks {
                 match socket.try_write(&chunk) {
                     Ok(_n) => {
-                        //log::trace!("wrote {} bytes", n);
+                        #[cfg(feature = "full_log")]
+                        if _n != chunk.len() {
+                            log::trace!("wrote incomplete chunk ({}/{})", chunk.len(), _n);
+                        }
                     }
                     Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
                         continue;
@@ -360,8 +369,9 @@ impl<T: 'static + Sync + Send> Server<T> {
         };
         let mut request =match Request::parse(request_bytes.clone()) {
             Ok(r) => r,
-            Err(e) => {
-                log::debug!("{}", e);
+            Err(_e) => {
+                #[cfg(feature = "full_log")]
+                log::debug!("{}", _e);
                 Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
                 return Ok(())
             }
@@ -415,15 +425,21 @@ impl<T: 'static + Sync + Send> Server<T> {
         // The method will take the request, and modify particularly the "variable count" variable
         let response = match self.pure_branch.pipeline(&mut request) {
             Some(pipeline) => {
+                #[cfg(feature = "full_log")]
+                log::trace!("found path {} with method {}", request.url, request.method);
                 match pipeline {
                     Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
                     Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
                 }.await
             },
-            None => Response::not_found()
+            None => {
+                #[cfg(feature = "full_log")]
+                log::trace!("path {} not found, with method {}", request.url, request.method);
+                Response::not_found()
+            }
         };
         if let Some(log_string) = &*self.log_string {
-            info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+            log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
         Server::<T>::dispatch_write(&socket, response).await?;
             //socket.shutdown();
