@@ -348,7 +348,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                     Ok(_n) => {
                         #[cfg(feature = "full_log")]
                         if _n != chunk.len() {
-                            log::trace!("wrote incomplete chunk ({}/{})", chunk.len(), _n);
+                            log::debug!("wrote incomplete chunk ({}/{})", _n, chunk.len());
                         }
                     }
                     Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
