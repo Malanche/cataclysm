@@ -1,7 +1,9 @@
 use tokio::{
     sync::Semaphore,
     net::{TcpListener, TcpStream}
+    //io::AsyncWriteExt
 };
+use bytes::Buf;
 use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
 #[cfg(feature = "ws")]
 use crate::ws::{WebSocketThread, WebSocketWriter};
@@ -333,31 +335,41 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     async fn dispatch_write(socket: &TcpStream, mut response: Response) -> Result<(), Error> {
+        let serialized_response = response.serialize();
+        let mut chunks_iter = serialized_response.chunks(RESPONSE_CHUNK_SIZE);
+        #[cfg(feature = "full_log")]
+        log::trace!("writting {} chunks of maximum {} bytes each", chunks_iter.len(), RESPONSE_CHUNK_SIZE);
+        // We check the first chunk
+        let mut current_chunk = match chunks_iter.next() {
+            Some(v) => v,
+            None => return Ok(()) // Zero length response
+        };
         loop {
             // Wait for the socket to be writable
             socket.writable().await.unwrap();
     
             // Try to write data, this may still fail with `WouldBlock`
-            // if the readiness event is a false positive.
-            let serialized_response = response.serialize();
-            let chunks = serialized_response.chunks(RESPONSE_CHUNK_SIZE);
-            #[cfg(feature = "full_log")]
-            log::trace!("writting {} chunks of {} bytes each", chunks.len(), RESPONSE_CHUNK_SIZE);
-            for chunk in chunks {
-                match socket.try_write(&chunk) {
-                    Ok(_n) => {
+            // if the readiness event is a false positive.        
+            match socket.try_write(&current_chunk) {
+                Ok(n) => {
+                    if n != current_chunk.remaining() {
+                        // There are some bytes still to be written in this chunk
                         #[cfg(feature = "full_log")]
-                        if _n != chunk.len() {
-                            log::debug!("wrote incomplete chunk ({}/{})", _n, chunk.len());
+                        log::debug!("incomplete chunk, trying to serve remaining bytes ({}/{})", current_chunk.len(), RESPONSE_CHUNK_SIZE);
+                        current_chunk.advance(n);
+                        continue;
+                    } else {
+                        current_chunk = match chunks_iter.next() {
+                            Some(v) => v,
+                            None => return Ok(())
                         }
                     }
-                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(e) => return Err(Error::Io(e))
                 }
+                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => break Err(Error::Io(e))
             }
-            return Ok(())
         }
     }
 
