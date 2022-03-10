@@ -273,7 +273,7 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     /// Deals with the read part of the socket stream
-    async fn dispatch_read(socket: &TcpStream) -> Result<Option<Vec<u8>>, Error> {
+    async fn dispatch_read(socket: &TcpStream, addr: std::net::SocketAddr) -> Result<Option<Vec<u8>>, Error> {
         let mut request_bytes = Vec::with_capacity(READ_CHUNK_SIZE);
         let mut expected_length = None;
         let mut header_size = 0;
@@ -294,7 +294,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                 Ok(n) => request_bytes.extend_from_slice(&buf[0..n]),
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if request.is_none() {
-                        request = match Request::parse(request_bytes.clone()) {
+                        request = match Request::parse(request_bytes.clone(), addr) {
                             Ok(r) => {
                                 // We check if we need to give a continue 100
                                 if r.headers.get("Expect").map(|h| h == "100-continue").unwrap_or(false) {
@@ -375,11 +375,11 @@ impl<T: 'static + Sync + Send> Server<T> {
 
     async fn dispatch(self: &Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr) -> Result<(), Error> {
         // let mut second_part = false;
-        let request_bytes = match Server::<T>::dispatch_read(&socket).await? {
+        let request_bytes = match Server::<T>::dispatch_read(&socket, addr).await? {
             Some(b) => b,
             None => return Ok(())
         };
-        let mut request =match Request::parse(request_bytes.clone()) {
+        let mut request =match Request::parse(request_bytes.clone(), addr) {
             Ok(r) => r,
             Err(_e) => {
                 #[cfg(feature = "full_log")]
@@ -432,7 +432,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             return Ok(())
         }
 
-        request.addr = Some(addr);
+        request.addr = addr;
         
         // The method will take the request, and modify particularly the "variable count" variable
         let response = match self.pure_branch.pipeline(&mut request) {

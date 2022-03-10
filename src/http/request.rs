@@ -18,7 +18,7 @@ pub struct Request {
     /// Header size in bytes
     pub(crate) header_size: usize,
     /// Address from the request
-    pub(crate) addr: Option<std::net::SocketAddr>,
+    pub(crate) addr: std::net::SocketAddr,
     pub(crate) content: Vec<u8>
 }
 
@@ -28,11 +28,17 @@ impl Request {
         self.url.path()
     }
 
+    /// Returns the query part of this request
     pub fn query(&self) -> Option<&str> {
         self.url.query()
     }
 
-    pub(crate) fn parse(mut source: Vec<u8>) -> Result<Request, Error> {
+    /// Returns the IP address from which this call has been made
+    pub fn address(&self) -> std::net::SocketAddr {
+        self.addr
+    }
+
+    pub(crate) fn parse(mut source: Vec<u8>, addr: std::net::SocketAddr) -> Result<Request, Error> {
         // http call should have at least 3 bytes. For sure
         let (one, two) = (source.iter(), source.iter().skip(2));
 
@@ -91,7 +97,7 @@ impl Request {
             depth: 0,
             headers,
             header_size,
-            addr: None,
+            addr,
             content
         })
     }
