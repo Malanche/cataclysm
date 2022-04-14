@@ -291,15 +291,16 @@ impl<T: 'static + Sync + Send> Server<T> {
                 Ok(0) => {
                     break
                 },
-                Ok(n) => request_bytes.extend_from_slice(&buf[0..n]),
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Ok(n) => {
+                    request_bytes.extend_from_slice(&buf[0..n]);
+
                     if request.is_none() {
                         request = match Request::parse(request_bytes.clone(), addr) {
                             Ok(r) => {
                                 // We check if we need to give a continue 100
                                 if r.headers.get("Expect").map(|h| h == "100-continue").unwrap_or(false) {
+                                    // We send it
                                     Server::<T>::dispatch_write(&socket, Response::r#continue()).await?;
-                                    continue;
                                 }
 
                                 // We check now if there is a content size hint
@@ -309,8 +310,9 @@ impl<T: 'static + Sync + Send> Server<T> {
                                 header_size = r.header_size;
                                 Some(r)
                             },
-                            Err(e) => {
-                                log::debug!("{}", e);
+                            Err(_e) => {
+                                #[cfg(feature = "full_log")]
+                                log::debug!("{}", _e);
                                 Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
                                 return Ok(None)
                             }
@@ -327,6 +329,9 @@ impl<T: 'static + Sync + Send> Server<T> {
                     } else {
                         break;
                     }
+                },
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue
                 }
                 Err(e) => return Err(Error::Io(e))
             }
@@ -346,7 +351,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         };
         loop {
             // Wait for the socket to be writable
-            socket.writable().await.unwrap();
+            socket.writable().await.map_err(|e| Error::Io(e))?;
     
             // Try to write data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.        
