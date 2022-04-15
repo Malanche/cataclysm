@@ -47,7 +47,8 @@ impl Session {
         if self.changed {
             let content = serde_json::to_string(&self.values).unwrap();
             let signature = base64::encode(hmac::sign(&self.secret, content.as_bytes()).as_ref());
-            let cookie = Cookie::new("cataclysm-session", format!("{}{}", signature, content));
+            let cookie = Cookie::build("cataclysm-session", format!("{}{}", signature, content))
+                .path("/").finish();
             req.headers.insert("Set-Cookie".to_string(), format!("{}", cookie.encoded()));
             req
         } else {
