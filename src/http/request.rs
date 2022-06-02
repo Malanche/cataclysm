@@ -67,7 +67,7 @@ impl Request {
             return Err(Error::Parse("request's first has incorrect format".into()));
         } else {
             (
-                Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?,
+                tokens[0].into(), // We force the method conversion
                 tokens[1],
                 tokens[2]
             )
@@ -81,8 +81,6 @@ impl Request {
             headers.insert(key, value);
         }
 
-        ;
-        //let method = Method::from_str(tokens[0]).ok_or(Error::Parse("method does not seem to exist".into()))?;
         if !version.starts_with("HTTP") {
             return Err(Error::Parse("unsupported protocol".into()))
         }

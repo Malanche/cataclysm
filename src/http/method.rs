@@ -6,7 +6,7 @@ use crate::{Callback, additional::Additional, Extractor, http::{Response, Reques
 use std::collections::HashSet;
 
 /// Available methods for HTTP Requests
-#[derive(Clone, PartialEq, Hash, Debug)]
+#[derive(Clone, Hash, Debug)]
 pub enum Method {
     /// Get method
     Get,
@@ -21,12 +21,41 @@ pub enum Method {
     /// Patch method
     Patch,
     /// Options method
-    Options
+    Options,
+    /// Trace method
+    Trace,
+    /// Connect method
+    Connect,
+    /// Custom method
+    Custom(String)
 }
 
 impl std::fmt::Display for Method {
     fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(formatter, "{}", self.to_str())
+    }
+}
+
+impl<A: AsRef<str>> From<A> for Method {
+    fn from(source: A) -> Method {
+        match source.as_ref() {
+            "GET" | "get" => Method::Get,
+            "POST" | "post" => Method::Post,
+            "PUT" | "put" => Method::Put,
+            "HEAD" | "head" => Method::Head,
+            "DELETE" | "delete" => Method::Delete,
+            "PATCH" | "patch" => Method::Patch,
+            "OPTIONS" | "options" => Method::Options,
+            "TRACE" | "trace" => Method::Trace,
+            "CONNECT" | "connect" => Method::Connect,
+            custom => Method::Custom(custom.to_string())
+        }
+    }
+}
+
+impl PartialEq for Method {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_str() == other.to_str()
     }
 }
 
@@ -90,32 +119,13 @@ impl Method {
         }
     }
 
-    /// Casts a method from a string.
-    ///
-    /// ```rust
-    /// # use cataclysm::http::Method;
-    /// assert_eq!(Some(Method::Get), Method::from_str("GET"));
-    /// ```
-    pub fn from_str<T: AsRef<str>>(source: T) -> Option<Method> {
-        match source.as_ref() {
-            "GET" | "get" => Some(Method::Get),
-            "POST" | "post" => Some(Method::Post),
-            "PUT" | "put" => Some(Method::Put),
-            "HEAD" | "head" => Some(Method::Head),
-            "DELETE" | "delete" => Some(Method::Delete),
-            "PATCH" | "patch" => Some(Method::Patch),
-            "OPTIONS" | "options" => Some(Method::Options),
-            _ => None
-        }
-    }
-
     /// Retrieves the `str` representation of a method (all caps).
     ///
     /// ```rust
     /// # use cataclysm::http::Method;
     /// assert_eq!("GET", Method::Get.to_str());
     /// ```
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(&self) -> &str {
         match self {
             Method::Get => "GET",
             Method::Post => "POST",
@@ -123,7 +133,10 @@ impl Method {
             Method::Head => "HEAD",
             Method::Delete => "DELETE",
             Method::Patch => "PATCH",
-            Method::Options => "OPTIONS"
+            Method::Options => "OPTIONS",
+            Method::Trace => "TRACE",
+            Method::Connect => "CONNECT",
+            Method::Custom(s) => &s
         }
     }
 
