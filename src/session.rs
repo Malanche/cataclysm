@@ -63,6 +63,7 @@ impl<T: Sync> Extractor<T> for Session {
             match Cookie::parse_encoded(cookie_string) {
                 Ok(cookie) => {
                     let value = cookie.value();
+                    // The hmac value is at least 44 bytes
                     if value.len() < 44 {
                         Ok(Session::new(additional.secret.clone()))
                     } else {

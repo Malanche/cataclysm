@@ -4,7 +4,7 @@ use tokio::{
     //io::AsyncWriteExt
 };
 use bytes::Buf;
-use crate::{Branch, Shared, Additional, branch::PureBranch, Pipeline, http::{Request, Response}, Error};
+use crate::{Branch, Shared, Additional, Cors, branch::PureBranch, Pipeline, http::{Request, Response, Method}, Error};
 #[cfg(feature = "ws")]
 use crate::ws::{WebSocketThread, WebSocketWriter};
 #[cfg(feature = "demon")]
@@ -25,6 +25,7 @@ pub struct ServerBuilder<T> {
     shared: Option<Shared<T>>,
     secret: Option<Key>,
     log_string: Option<String>,
+    cors: Option<Cors>,
     max_connections: usize,
     timeout: std::time::Duration,
     #[cfg(feature = "demon")]
@@ -46,6 +47,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
             shared: None,
             secret: None,
             log_string: None,
+            cors: None,
             max_connections: MAX_CONNECTIONS,
             timeout: std::time::Duration::from_millis(15_000),
             #[cfg(feature = "demon")]
@@ -132,6 +134,25 @@ impl<T: Sync + Send> ServerBuilder<T> {
         self
     }
 
+    /// Adds the cors "middleware"
+    ///
+    /// ```rust,no_run
+    /// # use cataclysm::{Server, Branch, CorsBuilder, http::{Response, Method}};
+    /// // Tree structure
+    /// let branch: Branch<()> = Branch::new("/").with(Method::Get.to(|| async {Response::ok()}));
+    /// // Now we configure the server
+    /// let server = Server::builder(branch)
+    ///     .cors(CorsBuilder::new()
+    ///         .origin("https://fake.domain")
+    ///         .max_age(600)
+    ///         .build().unwrap()
+    ///     ).build().unwrap();
+    /// ```
+    pub fn cors(mut self, cors: Cors) -> Self {
+        self.cors = Some(cors);
+        self
+    }
+
     /// Sets up a maximum number of connections for the server to be dealt with
     ///
     /// ```rust,no_run
@@ -199,6 +220,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
                 secret: Arc::new(Key::generate(hmac::HMAC_SHA256, &rng).map_err(|_| Error::Ring)?)
             }),
             log_string: Arc::new(self.log_string),
+            cors: Arc::new(self.cors),
             max_connections: Arc::new(Semaphore::new(self.max_connections)),
             timeout: Arc::new(self.timeout),
             #[cfg(feature = "demon")]
@@ -214,6 +236,7 @@ pub struct Server<T> {
     pure_branch: Arc<PureBranch<T>>,
     additional: Arc<Additional<T>>,
     log_string: Arc<Option<String>>,
+    cors: Arc<Option<Cors>>,
     max_connections: Arc<Semaphore>,
     timeout: Arc<std::time::Duration>,
     #[cfg(feature = "demon")]
@@ -394,6 +417,18 @@ impl<T: 'static + Sync + Send> Server<T> {
             }
         };
 
+        // We check here if the call is a preflight call from cors
+        if let Some(cors) = &*self.cors {
+            if request.method == Method::Options {
+                // We will assume this is a preflight cors request
+                if let Some(supported_methods) = self.pure_branch.supported_methods(request.path()) {
+                    // Endpoint found, time to reply
+                    Server::<T>::dispatch_write(&socket, cors.preflight(&request, supported_methods)).await?;
+                    return Ok(());
+                } // this will return a 404.
+            }
+        }
+
         // The request could be an upgrade request for a websockets connection
         #[cfg(feature = "ws")]
         if request.headers.get("Upgrade").map(|v| v == "websocket").unwrap_or(false) && request.headers.get("Connection").map(|v| v == "Upgrade" || v == "keep-alive, Upgrade").unwrap_or(false) {
@@ -440,7 +475,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         request.addr = addr;
         
         // The method will take the request, and modify particularly the "variable count" variable
-        let response = match self.pure_branch.pipeline(&mut request) {
+        let mut response = match self.pure_branch.pipeline(&mut request) {
             Some(pipeline) => {
                 #[cfg(feature = "full_log")]
                 log::trace!("found path {} with method {}", request.url, request.method);
@@ -455,9 +490,16 @@ impl<T: 'static + Sync + Send> Server<T> {
                 Response::not_found()
             }
         };
+
+        // Cors validation, not as an actual pipeline layer
+        if let Some(cors) = &*self.cors {
+            cors.apply(&request, &mut response);
+        }
+
         if let Some(log_string) = &*self.log_string {
             log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
+
         Server::<T>::dispatch_write(&socket, response).await?;
             //socket.shutdown();
         Ok(())

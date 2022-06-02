@@ -3,21 +3,34 @@ use std::collections::HashMap;
 /// Contains the data of an http response
 pub struct Response {
     protocol: String,
-    pub(crate) status: (u32, &'static str),
+    pub(crate) status: (u32, String),
     pub(crate) headers: HashMap<String, String>,
     pub content: Vec<u8>
 }
 
-impl Into<Response> for (u32, &'static str) {
-    fn into(self) -> Response {
+impl<A: Into<String>> From<(u32, A)> for Response {
+    fn from(source: (u32, A)) -> Response {
         Response {
             protocol: "HTTP/1.1".into(),
-            status: self,
+            status: (source.0, source.1.into()),
             headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
             content: Vec::new()
         }
     }
 }
+
+/*
+impl<A: Into<String>> Into<Response> for (u32, A) {
+    fn into(self) -> Response {
+        Response {
+            protocol: "HTTP/1.1".into(),
+            status: (self.0, self.1.into()),
+            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
+            content: Vec::new()
+        }
+    }
+}
+*/
 
 impl Response {
     // Informational
@@ -90,12 +103,7 @@ impl Response {
 
     /// Creates a new response, with defaut response status 200, and a text/html content type
     pub fn new() -> Response {
-        Response {
-            protocol: "HTTP/1.1".into(),
-            status: Response::OK,
-            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
-            content: Vec::new()
-        }
+        Response::OK.into()
     }
 
     /// Inserts a header into the response

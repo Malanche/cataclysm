@@ -87,7 +87,7 @@ impl Request {
             return Err(Error::Parse("unsupported protocol".into()))
         }
         // And we construct the request
-        let url = Url::parse(&format!("http://{}{}",headers.get("Host").cloned().unwrap_or("missing.host".to_string()), path)).map_err(|e| Error::Parse(format!("wrong url path, {}", e)))?;
+        let url = Url::parse(&format!("http://{}{}",headers.get("Host").cloned().unwrap_or("missing.host".to_string()), path)).map_err(Error::Url)?;
         //let _version = tokens[2];
         // Parse following lines
         Ok(Request {

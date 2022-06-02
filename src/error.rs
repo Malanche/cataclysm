@@ -5,6 +5,8 @@ pub enum Error {
     Io(std::io::Error),
     /// Could not parse properly the http request, malformed
     Parse(String),
+    /// Error from url parsing
+    Url(url::ParseError),
     /// Could not extract parameter from request. Indicating a bad request.
     ExtractionBR(String),
     /// Could not extract parameter from request. Indicating a bad server error.
@@ -26,6 +28,7 @@ impl std::fmt::Display for Error {
         let content = match self {
             Error::Io(inner_error) => format!("io error: {}", inner_error),
             Error::Parse(detail) => format!("parse error: {}", detail),
+            Error::Url(detail) => format!("url parse error: {}", detail),
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
             Error::Ring => format!("ring error"),

@@ -35,6 +35,8 @@ pub use self::shared::{Shared};
 mod shared;
 pub use self::additional::Additional;
 mod additional;
+pub use self::cors::{CorsBuilder, Cors};
+mod cors;
 
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 #[cfg(feature = "ws")]

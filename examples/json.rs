@@ -4,6 +4,7 @@ use serde::Deserialize;
 use misc::SimpleLogger;
 mod misc;
 
+#[allow(unused)]
 #[derive(Deserialize, Debug)]
 struct BodyParams {
     name: String

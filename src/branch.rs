@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use regex::Regex;
 use futures::future::FutureExt;
 use crate::{
@@ -814,9 +814,68 @@ impl<T> PureBranch<T> {
         }
     }
 
+    /// Gives back the supported methods on each path, in case the branch was found
+    pub fn supported_methods<A: AsRef<str>>(&self, trail: A) -> Option<HashSet<Method>> {
+        // Tokenizamos la cadena
+        let trimmed_trail = trail.as_ref().trim_start_matches("/");
+        
+        let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
+            (base.to_string(), rest.to_string())
+        } else {
+            // Only one token here
+            if trimmed_trail.is_empty() {
+                return if self.default_callback.is_some() || self.default_method_callback.is_some() {
+                    Some(vec![Method::Get, Method::Post, Method::Put, Method::Head, Method::Delete, Method::Patch, Method::Options].into_iter().collect())
+                } else {
+                    let methods: HashSet<_> = self.method_callbacks.keys().map(|m| m.clone()).collect();
+                    Some(methods)
+                }
+            } else {
+                (trimmed_trail.to_string(), "".to_string())
+            }
+        };
+
+        // First, exact matching through hash lookup
+        let mut result = None;
+
+        if let Some(branch) = self.exact_branches.get(&base) {
+            result = branch.supported_methods(rest);
+        } else {
+            // Now, O(n) regex pattern matching
+            for (pattern, branch) in self.pattern_branches.iter() {
+                if pattern.is_match(&base) {
+                    result = branch.supported_methods(&rest);
+                    break;
+                }
+            }
+
+            if result.is_none() {
+                // Finally, if there is a variable, we reply (constant time)
+                if let Some((_id, branch)) = &self.variable_branch {
+                    result = branch.supported_methods(rest);
+                }
+            }
+        }
+
+        if result.is_none() {
+            // We check if we are checking out a file, and there is a file callback
+            if std::path::Path::new(trimmed_trail).extension().is_some() {
+                if self.files_callback.is_some() {
+                    result = Some(vec![Method::Get].into_iter().collect());
+                }
+            }
+            
+            if result.is_none() && self.default_callback.is_some() {
+                result = Some(vec![Method::Get, Method::Post, Method::Put, Method::Head, Method::Delete, Method::Patch, Method::Options].into_iter().collect());
+            }
+        }
+
+        result
+    }
+
     /// Gives back the callback information
     ///
-    /// For internal use only
+    /// For internal use only. This function shares code with the `supported_methods` function. Requires some way to abstract it.
     fn callback_information<A: AsRef<str>>(&self, trail: A, method: &Method) -> Option<CallbackInformation<T>> {
         // Tokenizamos la cadena
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
