@@ -59,7 +59,7 @@ impl Session {
 
 impl<T: Sync> Extractor<T> for Session {
     fn extract(req: &Request, additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(cookie_string) = req.headers.get("Cookie") {
+        if let Some(cookie_string) = req.headers.get("Cookie").and(req.headers.get("cookie")) {
             match Cookie::parse_encoded(cookie_string) {
                 Ok(cookie) => {
                     let value = cookie.value();
