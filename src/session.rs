@@ -59,7 +59,7 @@ impl Session {
 
 impl<T: Sync> Extractor<T> for Session {
     fn extract(req: &Request, additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(cookie_string) = req.headers.get("Cookie").and(req.headers.get("cookie")) {
+        if let Some(cookie_string) = req.headers.get("Cookie").or_else(|| req.headers.get("cookie")) {
             match Cookie::parse_encoded(cookie_string) {
                 Ok(cookie) => {
                     let value = cookie.value();
@@ -81,19 +81,37 @@ impl<T: Sync> Extractor<T> for Session {
                                                 changed: false,
                                                 secret: additional.secret.clone()
                                             }),
-                                            Err(_) => Ok(Session::new(additional.secret.clone()))
+                                            Err(_e) => {
+                                                #[cfg(feature = "full_log")]
+                                                log::debug!("session error: {}", _e);
+                                                Ok(Session::new(additional.secret.clone()))
+                                            }
                                         }
                                     },
-                                    Err(_) => Ok(Session::new(additional.secret.clone()))
+                                    Err(_e) => {
+                                        #[cfg(feature = "full_log")]
+                                        log::debug!("session error: {}", _e);
+                                        Ok(Session::new(additional.secret.clone()))
+                                    }
                                 }
                             },
-                            Err(_) => Ok(Session::new(additional.secret.clone()))
+                            Err(_e) => {
+                                #[cfg(feature = "full_log")]
+                                log::debug!("session error: {}", _e);
+                                Ok(Session::new(additional.secret.clone()))
+                            }
                         }
                     }
                 },
-                Err(_e) => Ok(Session::new(additional.secret.clone()))
+                Err(_e) => {
+                    #[cfg(feature = "full_log")]
+                    log::debug!("session error: {}", _e);
+                    Ok(Session::new(additional.secret.clone()))
+                }
             }
         } else {
+            #[cfg(feature = "full_log")]
+            log::debug!("cookie not found among request headers");
             return Ok(Session::new(additional.secret.clone()))
         }
     }
