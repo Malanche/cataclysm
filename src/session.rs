@@ -1,24 +1,35 @@
+pub use self::session_creator::SessionCreator;
+pub use self::cookie_session::CookieSession;
+mod session_creator;
+mod cookie_session;
+
 use crate::{Extractor, Error, http::{Request, Response}, additional::Additional};
 use std::collections::HashMap;
-use cookie::Cookie;
 use std::sync::Arc;
-use ring::hmac::{self, Key};
 
 /// Working sessions, but not finished
 pub struct Session {
     values: HashMap<String, String>,
     changed: bool,
-    secret: Arc<Key>
+    session_creator: Arc<Box<dyn SessionCreator>>
 }
 
 impl Session {
     /// Creates a new session
-    fn new(secret: Arc<Key>) -> Session {
+    fn new<A: 'static + SessionCreator>(session_creator: A) -> Session {
+        let session_creator: Arc<Box<dyn SessionCreator>> = Arc::new(Box::new(session_creator));
         Session{
             values: HashMap::new(),
             changed: false,
-            secret
+            session_creator
         }
+    }
+
+    /// Creates a new session
+    pub fn new_with_values<A: 'static + SessionCreator>(session_creator: A, values: HashMap<String, String>) -> Session {
+        let mut session = Session::new(session_creator);
+        session.values = values;
+        session
     }
 }
 
@@ -43,14 +54,9 @@ impl Session {
     /// Applies all the changes of the session to the response.
     ///
     /// It is not the most elegant solution, but soon a new one will be worked out to apply the session changes to the response (probably using layers).
-    pub fn apply(self, mut req: Response) -> Response {
+    pub fn apply(self, req: Response) -> Response {
         if self.changed {
-            let content = serde_json::to_string(&self.values).unwrap();
-            let signature = base64::encode(hmac::sign(&self.secret, content.as_bytes()).as_ref());
-            let cookie = Cookie::build("cataclysm-session", format!("{}{}", signature, content))
-                .path("/").finish();
-            req.headers.insert("Set-Cookie".to_string(), format!("{}", cookie.encoded()));
-            req
+            self.session_creator.apply(&self.values, req)
         } else {
             req
         }
@@ -59,60 +65,10 @@ impl Session {
 
 impl<T: Sync> Extractor<T> for Session {
     fn extract(req: &Request, additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(cookie_string) = req.headers.get("Cookie").or_else(|| req.headers.get("cookie")) {
-            match Cookie::parse_encoded(cookie_string) {
-                Ok(cookie) => {
-                    let value = cookie.value();
-                    // The hmac value is at least 44 bytes
-                    if value.len() < 44 {
-                        Ok(Session::new(additional.secret.clone()))
-                    } else {
-                        let signature = value.get(0..44).unwrap();
-                        let content = value.get(44..value.len()).unwrap();
-
-                        // First, we try to decode the content
-                        match serde_json::from_str(content) {
-                            Ok(values) => {
-                                match base64::decode(signature) {
-                                    Ok(tag) => {
-                                        match hmac::verify(&additional.secret, content.as_bytes(), &tag) {
-                                            Ok(_) => Ok(Session{
-                                                values,
-                                                changed: false,
-                                                secret: additional.secret.clone()
-                                            }),
-                                            Err(_e) => {
-                                                #[cfg(feature = "full_log")]
-                                                log::debug!("session error: {}", _e);
-                                                Ok(Session::new(additional.secret.clone()))
-                                            }
-                                        }
-                                    },
-                                    Err(_e) => {
-                                        #[cfg(feature = "full_log")]
-                                        log::debug!("session error: {}", _e);
-                                        Ok(Session::new(additional.secret.clone()))
-                                    }
-                                }
-                            },
-                            Err(_e) => {
-                                #[cfg(feature = "full_log")]
-                                log::debug!("session error: {}", _e);
-                                Ok(Session::new(additional.secret.clone()))
-                            }
-                        }
-                    }
-                },
-                Err(_e) => {
-                    #[cfg(feature = "full_log")]
-                    log::debug!("session error: {}", _e);
-                    Ok(Session::new(additional.secret.clone()))
-                }
-            }
+        if let Some(session_creator) = &additional.session_creator {
+            session_creator.create(req)
         } else {
-            #[cfg(feature = "full_log")]
-            log::debug!("cookie not found among request headers");
-            return Ok(Session::new(additional.secret.clone()))
+            Err(Error::NoSessionCreator)
         }
     }
 }

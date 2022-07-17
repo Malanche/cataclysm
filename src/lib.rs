@@ -45,8 +45,8 @@ pub(crate) use self::metafunctions::{WebSocketFn};
 pub(crate) use self::metafunctions::{WebSocketDemonFn};
 mod metafunctions;
 
-pub use self::session::Session;
-mod session;
+/// Contains usefull stuff for session management
+pub mod session;
 
 /// Contains some basic websockets functionality
 #[cfg(feature = "ws")]

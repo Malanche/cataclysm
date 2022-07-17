@@ -12,15 +12,24 @@ pub enum Error {
     /// Could not extract parameter from request. Indicating a bad server error.
     ExtractionSE(String),
     /// Indicates a Ring error
-    Ring,
+    Ring(ring::error::Unspecified),
+    /// Indicates that no session creator was set
+    NoSessionCreator,
     /// Indicates that no gate was provided to spawn demons
     #[cfg(feature = "demon")]
     MissingGate,
     /// Internal error in apocalypse
     #[cfg(feature = "demon")]
     Apocalypse(apocalypse::Error),
-    /// Dummy error, needs to be removed
-    Dummy
+    /// Custom error, try to avoid its use
+    Custom(String)
+}
+
+impl Error {
+    /// Creates a custom error with a custom message
+    pub fn custom<A: Into<String>>(message: A) -> Error {
+        Error::Custom(message.into())
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -31,12 +40,13 @@ impl std::fmt::Display for Error {
             Error::Url(detail) => format!("url parse error: {}", detail),
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
-            Error::Ring => format!("ring error"),
+            Error::Ring(e) => format!("ring error: {}", e),
+            Error::NoSessionCreator => format!("the session extractor requires a SessionCreator struct to work, see documentation"),
             #[cfg(feature = "demon")]
             Error::MissingGate => format!("for demon spawning, a gate must be provided to the server through the builder"),
             #[cfg(feature = "demon")]
             Error::Apocalypse(inner_error) => format!("apocalypse error, {}", inner_error),
-            Error::Dummy => format!("Dummy error")
+            Error::Custom(e) => format!("{}", e)
         };
         write!(formatter, "{}", content)
     }
