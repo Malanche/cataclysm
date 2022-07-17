@@ -213,8 +213,9 @@ impl<T: Sync + Send> Branch<T> {
         top_branch.default_method_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
-                Err(e) => {
-                    log::debug!("{}", e);
+                Err(_e) => {
+                    #[cfg(feature = "full_log")]
+                    log::error!("extractor error: {}", _e);
                     (async {Response::bad_request()}).boxed()
                 }
             }
@@ -237,8 +238,9 @@ impl<T: Sync + Send> Branch<T> {
         top_branch.default_callback = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
             match <A as Extractor<T>>::extract(&req, additional) {
                 Ok(args) => callback.invoke(args).boxed(),
-                Err(e) => {
-                    log::debug!("{}", e);
+                Err(_e) => {
+                    #[cfg(feature = "full_log")]
+                    log::error!("extractor error: {}", _e);
                     (async {Response::bad_request()}).boxed()
                 }
             }

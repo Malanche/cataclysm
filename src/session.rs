@@ -68,6 +68,8 @@ impl<T: Sync> Extractor<T> for Session {
         if let Some(session_creator) = &additional.session_creator {
             session_creator.create(req)
         } else {
+            // Forcefully log an error message, as this should be quickly noticed by the developer
+            log::error!("cataclysm error: you need to setup a `SessionCreator` before you try to use the `Session` extractor!");
             Err(Error::NoSessionCreator)
         }
     }

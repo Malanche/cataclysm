@@ -78,8 +78,9 @@ impl MultipleMethod {
             handler: Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
                 match <A as Extractor<T>>::extract(&req, additional) {
                     Ok(args) => handler.invoke(args).boxed(),
-                    Err(e) => {
-                        log::debug!("{}", e);
+                    Err(_e) => {
+                        #[cfg(feature = "full_log")]
+                        log::error!("extractor error: {}", _e);
                         (async {Response::bad_request()}).boxed()
                     }
                 }
@@ -110,8 +111,9 @@ impl Method {
             handler: Box::new(move |req: Request, additional: Arc<Additional<T>>|  {
                 match <A as Extractor<T>>::extract(&req, additional) {
                     Ok(args) => handler.invoke(args).boxed(),
-                    Err(e) => {
-                        log::debug!("{}", e);
+                    Err(_e) => {
+                        #[cfg(feature = "full_log")]
+                        log::error!("extractor error: {}", _e);
                         (async {Response::bad_request()}).boxed()
                     }
                 }

@@ -7,13 +7,15 @@ use crate::{
 use std::collections::HashMap;
 use std::time::Duration;
 use cookie::Cookie;
+use chrono::{DateTime, Utc};
 
 #[derive(Clone)]
 pub struct CookieSession {
     key: Key,
     cookie_name: String,
-    path: String,
-    duration: Duration,
+    path: Option<String>,
+    expires: Option<DateTime<Utc>>,
+    max_age: Option<Duration>,
     force_failure: bool
 }
 
@@ -24,8 +26,9 @@ impl CookieSession {
         CookieSession {
             key: Key::generate(hmac::HMAC_SHA256, &rng).map_err(Error::Ring).unwrap(),
             cookie_name: "cataclysm-session".to_string(),
-            path: "/".to_string(),
-            duration: Duration::from_secs(3_600 * 24),
+            path: None,
+            expires: None,
+            max_age: None,
             force_failure: false
         }
     }
@@ -62,8 +65,6 @@ impl CookieSession {
 
     /// Sets a custom `path` for generated cookies
     ///
-    /// By default, the "/" path is applied.
-    ///
     /// ```rust,no_run
     /// use cataclysm::session::CookieSession;
     /// 
@@ -71,21 +72,39 @@ impl CookieSession {
     ///     .path("/applies/only/here");
     /// ```
     pub fn path<A: Into<String>>(mut self, path: A) -> Self {
-        self.path = path.into();
+        self.path = Some(path.into());
         self
     }
 
     /// Sets a duration for the cookie (that is, the `expires` field)
     ///
+    /// You should try to avoid this method, and use `max_age` instead.
+    ///
     /// ```rust,no_run
     /// use cataclysm::session::CookieSession;
+    /// use chrono::{DateTime, Utc, Duration};
     /// 
-    /// let cookie_session = CookieSession::new().secret("really secret!");
+    /// let cookie_session = CookieSession::new().expires(Utc::now() + Duration::weeks(52));
     /// ```
     ///
     /// If no value is provided, for security 1 day is used.
-    pub fn duration(mut self, duration: Duration) -> Self {
-        self.duration = duration;
+    pub fn expires(mut self, expires: DateTime<Utc>) -> Self {
+        self.expires = Some(expires);
+        self
+    }
+
+    /// Sets a duration for the cookie (that is, the `max_age` field)
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::CookieSession;
+    /// use std::time::Duration;
+    /// 
+    /// let cookie_session = CookieSession::new().max_age(Duration::from_secs(3_600 * 6));
+    /// ```
+    ///
+    /// If no value is provided, for security 1 day is used.
+    pub fn max_age(mut self, max_age: Duration) -> Self {
+        self.max_age = Some(max_age);
         self
     }
 
@@ -141,11 +160,42 @@ impl SessionCreator for CookieSession {
     fn apply(&self, values: &HashMap<String, String>, mut res: Response) -> Response {
         let content = serde_json::to_string(values).unwrap();
         let signature = base64::encode(hmac::sign(&self.key, content.as_bytes()).as_ref());
-        //let expires = chrono::Utc::now();// + &self.duration;
-        let cookie = Cookie::build(&self.cookie_name, format!("{}{}", signature, content))
-            .path(&self.path)
-            //.expires(expires)
-            .finish();
+
+        let cookie_builder = Cookie::build(&self.cookie_name, format!("{}{}", signature, content));
+
+        let cookie_builder = if let Some(path) = &self.path {
+            cookie_builder.path(path)
+        } else {
+            cookie_builder
+        };
+
+        let cookie_builder = if let Some(expires) = &self.expires {
+            match cookie::time::OffsetDateTime::from_unix_timestamp(expires.timestamp()) {
+                Ok(v) => cookie_builder.expires(v),
+                Err(e) => {
+                    log::error!("could not set expires flag to cookie, {}", e);
+                    cookie_builder
+                }
+            }
+        } else {
+            cookie_builder
+        };
+
+        let cookie_builder = if let Some(max_age) = &self.max_age {
+            let max_age = match max_age.clone().try_into() {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("failed to set max-age to cookie ({}), loading safety default 3,600 seconds", e);
+                    cookie::time::Duration::seconds(3_600)
+                }
+            };
+            cookie_builder.max_age(max_age)
+        } else {
+            cookie_builder
+        };
+
+        let cookie = cookie_builder.finish();
+
         res.headers.insert("Set-Cookie".to_string(), format!("{}", cookie.encoded()));
         res
     }
