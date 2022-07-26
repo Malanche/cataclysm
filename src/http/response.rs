@@ -124,6 +124,9 @@ impl Response {
 
         self.headers.insert("Content-Length".into(), format!("{}", self.content.len()));
         response += &self.headers.iter().map(|(key, value)| format!("{}: {}", key, value)).collect::<Vec<_>>().join("\r\n");
+        // print response for debug purposes
+        #[cfg(feature = "full_log")]
+        log::trace!("serializing http response with headers: {}", response);
         // We finalize the headers
         response += "\r\n\r\n";
         // And now add the body, if any

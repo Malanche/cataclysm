@@ -256,6 +256,8 @@ impl<T: 'static + Sync + Send> Server<T> {
         let listener = TcpListener::bind(socket.as_ref()).await.map_err(|e| Error::Io(e))?;
 
         log::info!("Cataclysm ongoing \u{26c8}");
+        #[cfg(feature = "full_log")]
+        log::info!("using the `full_log` feature might impact performance");
         // We need a fused future for the select macro
         tokio::select! {
             _ = async {
@@ -420,15 +422,11 @@ impl<T: 'static + Sync + Send> Server<T> {
             }
         };
 
-        // We check here if the call is a preflight call from cors
         if let Some(cors) = &*self.cors {
             if request.method == Method::Options {
-                // We will assume this is a preflight cors request
                 if let Some(supported_methods) = self.pure_branch.supported_methods(request.path()) {
-                    // Endpoint found, time to reply
-                    Server::<T>::dispatch_write(&socket, cors.preflight(&request, supported_methods)).await?;
-                    return Ok(());
-                } // this will return a 404.
+                    Server::<T>::dispatch_write(&socket, cors.preflight(&request, &supported_methods)).await?;
+                } // If the method is not options, it will anyways return a not-found
             }
         }
 
