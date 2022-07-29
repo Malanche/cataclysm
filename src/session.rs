@@ -1,5 +1,5 @@
 pub use self::session_creator::SessionCreator;
-pub use self::cookie_session::CookieSession;
+pub use self::cookie_session::{CookieSession, SameSite};
 mod session_creator;
 mod cookie_session;
 

@@ -9,13 +9,35 @@ use std::time::Duration;
 use cookie::Cookie;
 use chrono::{DateTime, Utc};
 
+/// Enum to indicate a same site policy in the cookie builder
+#[derive(Clone)]
+pub enum SameSite {
+    Strict,
+    Lax,
+    None
+}
+
+impl SameSite {
+    fn to_cookie_same_site(&self) -> cookie::SameSite {
+        match self {
+            SameSite::Strict => cookie::SameSite::Strict,
+            SameSite::Lax => cookie::SameSite::Lax,
+            SameSite::None => cookie::SameSite::None
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct CookieSession {
     key: Key,
     cookie_name: String,
     path: Option<String>,
+    domain: Option<String>,
     expires: Option<DateTime<Utc>>,
     max_age: Option<Duration>,
+    secure: Option<bool>,
+    http_only: Option<bool>,
+    same_site: Option<SameSite>,
     force_failure: bool
 }
 
@@ -27,8 +49,12 @@ impl CookieSession {
             key: Key::generate(hmac::HMAC_SHA256, &rng).map_err(Error::Ring).unwrap(),
             cookie_name: "cataclysm-session".to_string(),
             path: None,
+            domain: None,
             expires: None,
             max_age: None,
+            secure: None,
+            http_only: None,
+            same_site: None,
             force_failure: false
         }
     }
@@ -76,7 +102,20 @@ impl CookieSession {
         self
     }
 
-    /// Sets a duration for the cookie (that is, the `expires` field)
+    /// Sets a custom `domain` for generated cookies
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::CookieSession;
+    /// 
+    /// let cookie_session = CookieSession::new()
+    ///     .domain("example.com");
+    /// ```
+    pub fn domain<A: Into<String>>(mut self, domain: A) -> Self {
+        self.domain = Some(domain.into());
+        self
+    }
+
+    /// Sets a duration for the cookie (that is, using the `expires` field)
     ///
     /// You should try to avoid this method, and use `max_age` instead.
     ///
@@ -87,13 +126,13 @@ impl CookieSession {
     /// let cookie_session = CookieSession::new().expires(Utc::now() + Duration::weeks(52));
     /// ```
     ///
-    /// If no value is provided, for security 1 day is used.
+    /// Please note that the "expires" field will not update the provided date as time goes by. Use the [max_age](CookieSession::max_age) method instead.
     pub fn expires(mut self, expires: DateTime<Utc>) -> Self {
         self.expires = Some(expires);
         self
     }
 
-    /// Sets a duration for the cookie (that is, the `max_age` field)
+    /// Sets a duration for the cookie (that is, using the `max_age` field)
     ///
     /// ```rust,no_run
     /// use cataclysm::session::CookieSession;
@@ -101,10 +140,44 @@ impl CookieSession {
     /// 
     /// let cookie_session = CookieSession::new().max_age(Duration::from_secs(3_600 * 6));
     /// ```
-    ///
-    /// If no value is provided, for security 1 day is used.
     pub fn max_age(mut self, max_age: Duration) -> Self {
         self.max_age = Some(max_age);
+        self
+    }
+
+    /// Sets the `secure` field in the cookie
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::CookieSession;
+    /// 
+    /// let cookie_session = CookieSession::new().secure(true);
+    /// ```
+    pub fn secure(mut self, secure: bool) -> Self {
+        self.secure = Some(secure);
+        self
+    }
+
+    /// Sets the `http_only` field in the cookie
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::CookieSession;
+    /// 
+    /// let cookie_session = CookieSession::new().http_only(true);
+    /// ```
+    pub fn http_only(mut self, http_only: bool) -> Self {
+        self.http_only = Some(http_only);
+        self
+    }
+
+    /// Sets the `same_site` field in the cookie
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::{CookieSession, SameSite};
+    /// 
+    /// let cookie_session = CookieSession::new().same_site(SameSite::Lax);
+    /// ```
+    pub fn same_site(mut self, same_site: SameSite) -> Self {
+        self.same_site = Some(same_site);
         self
     }
 
@@ -169,6 +242,12 @@ impl SessionCreator for CookieSession {
             cookie_builder
         };
 
+        let cookie_builder = if let Some(domain) = &self.domain {
+            cookie_builder.domain(domain)
+        } else {
+            cookie_builder
+        };
+
         let cookie_builder = if let Some(expires) = &self.expires {
             match cookie::time::OffsetDateTime::from_unix_timestamp(expires.timestamp()) {
                 Ok(v) => cookie_builder.expires(v),
@@ -190,6 +269,24 @@ impl SessionCreator for CookieSession {
                 }
             };
             cookie_builder.max_age(max_age)
+        } else {
+            cookie_builder
+        };
+
+        let cookie_builder = if let Some(secure) = &self.secure {
+            cookie_builder.secure(*secure)
+        } else {
+            cookie_builder
+        };
+
+        let cookie_builder = if let Some(http_only) = &self.http_only {
+            cookie_builder.http_only(*http_only)
+        } else {
+            cookie_builder
+        };
+
+        let cookie_builder = if let Some(same_site) = &self.same_site {
+            cookie_builder.same_site(same_site.to_cookie_same_site())
         } else {
             cookie_builder
         };
