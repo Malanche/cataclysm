@@ -27,6 +27,7 @@ impl SameSite {
     }
 }
 
+/// Session implementation, cookie based.
 #[derive(Clone)]
 pub struct CookieSession {
     key: Key,
@@ -183,8 +184,14 @@ impl CookieSession {
 
     /// Helper function to extract a session from a cookie
     fn build_from_req(&self, req: &Request) -> Result<Option<Session>, Error> {
-        if let Some(cookie_string) = req.headers.get("Cookie").or_else(|| req.headers.get("cookie")) {
-            let cookie = Cookie::parse_encoded(cookie_string).map_err(|e| Error::custom(format!("{}", e)))?;
+        // we can have multiple cookies, so we try for each one
+        let empty = Vec::new();
+        let cookie_headers = vec![
+            req.headers.get("Cookie").unwrap_or_else(|| &empty),
+            req.headers.get("cookie").unwrap_or_else(|| &empty)
+        ].into_iter().flatten();
+        for cookie_header in cookie_headers {
+            let cookie = Cookie::parse_encoded(cookie_header).map_err(|e| Error::custom(format!("{}", e)))?;
             let value = cookie.value();
             // The hmac value is at least 44 bytes
             if value.len() < 44 {
@@ -201,11 +208,10 @@ impl CookieSession {
 
                 hmac::verify(&self.key, content.as_bytes(), &tag).map_err(|e| Error::custom(format!("{}", e)))?;
 
-                Ok(Some(Session::new_with_values(self.clone(), values)))
+                return Ok(Some(Session::new_with_values(self.clone(), values)))
             }
-        } else {
-            Ok(None)
         }
+        Ok(None)
     }
 }
 

@@ -35,7 +35,7 @@ impl<Q> Query<Q> {
 
 impl<T: Sync, Q: 'static + DeserializeOwned + Send> Extractor<T> for Query<Q> {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(query) = req.query() {
+        if let Some(query) = req.url().query() {
             serde_qs::from_str::<Q>(query)
         } else {
             // We will check if the Q could be deserialized from an empty string

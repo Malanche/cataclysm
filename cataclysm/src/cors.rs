@@ -119,7 +119,9 @@ pub struct Cors {
 
 impl Cors {
     pub(crate) fn apply(&self, request: &Request, response: &mut Response) {
-        let origin_source = request.headers.get("Origin").or_else(|| request.headers.get("origin"));
+        let origin_source = request.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
+            request.headers.get("origin").map(|o| o.get(0)).flatten()
+        );
         let acao = match &self.origins {
             CorsOrigin::None => None,
             CorsOrigin::All => {
@@ -166,7 +168,9 @@ impl Cors {
 
     /// Computed the preflight response
     pub(crate) fn preflight(&self, request: &Request, methods: &HashSet<Method>) -> Response {
-        let origin_source = request.headers.get("Origin").or_else(|| request.headers.get("origin"));
+        let origin_source = request.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
+            request.headers.get("origin").map(|o| o.get(0)).flatten()
+        );
         let acao = match &self.origins {
             CorsOrigin::None => None,
             CorsOrigin::All => {
@@ -218,7 +222,7 @@ impl Cors {
             let headers = if let Some(override_headers) = &self.headers {
                 override_headers.iter().cloned().collect::<Vec<_>>().join(", ")
             } else {
-                match request.headers.get("Access-Control-Request-Headers") {
+                match request.headers.get("Access-Control-Request-Headers").map(|acrh| acrh.get(0)).flatten() {
                     Some(headers) => headers.clone(),
                     None => {
                         #[cfg(feature = "full_log")]

@@ -326,13 +326,13 @@ impl<T: 'static + Sync + Send> Server<T> {
                         request = match Request::parse(request_bytes.clone(), addr) {
                             Ok(r) => {
                                 // We check if we need to give a continue 100
-                                if r.headers.get("Expect").map(|h| h == "100-continue").unwrap_or(false) {
+                                if r.headers.get("Expect").map(|h| h.get(0).map(|ih| ih == "100-continue")).flatten().unwrap_or(false) {
                                     // We send it
                                     Server::<T>::dispatch_write(&socket, Response::r#continue()).await?;
                                 }
 
                                 // We check now if there is a content size hint
-                                expected_length = r.headers.get("Content-Length").map(|v| v.parse::<usize>().ok()).flatten();
+                                expected_length = r.headers.get("Content-Length").map(|cl| cl.get(0).map(|v| v.parse::<usize>().ok())).flatten().flatten();
                                 #[cfg(feature = "full_log")]
                                 log::trace!("expecting to read {:?} bytes in request", expected_length);
                                 header_size = r.header_size;
@@ -424,7 +424,7 @@ impl<T: 'static + Sync + Send> Server<T> {
 
         if let Some(cors) = &*self.cors {
             if request.method == Method::Options {
-                if let Some(supported_methods) = self.pure_branch.supported_methods(request.path()) {
+                if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
                     Server::<T>::dispatch_write(&socket, cors.preflight(&request, &supported_methods)).await?;
                 } // If the method is not options, it will anyways return a not-found
             }
@@ -432,15 +432,15 @@ impl<T: 'static + Sync + Send> Server<T> {
 
         // The request could be an upgrade request for a websockets connection
         #[cfg(feature = "ws")]
-        if request.headers.get("Upgrade").map(|v| v == "websocket").unwrap_or(false) && request.headers.get("Connection").map(|v| v == "Upgrade" || v == "keep-alive, Upgrade").unwrap_or(false) {
-            if let Some(nonce) = request.headers.get("Sec-WebSocket-Key") {
+        if request.headers.get("Upgrade").map(|u| u.get(0).map(|v| v == "websocket")).flatten().unwrap_or(false) && request.headers.get("Connection").map(|c| c.get(0).map(|v| v == "Upgrade" || v == "keep-alive, Upgrade")).flatten().unwrap_or(false) {
+            if let Some(nonce) = request.headers.get("Sec-WebSocket-Key").map(|wsk| wsk.get(0)).flatten() {
                 // According to RFC4122
                 let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
                 let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
 
                 // We check if there is a demon handler
                 #[cfg(feature = "demon")]
-                match self.pure_branch.websocket_demon_handler(request.path()) {
+                match self.pure_branch.websocket_demon_handler(request.url().path()) {
                     Some(handler) => {
                         let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
                         Server::<T>::dispatch_write(&socket, response).await?;
@@ -455,7 +455,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                 }
 
                 // We request a websocket handler
-                match self.pure_branch.websocket_handler(request.path()) {
+                match self.pure_branch.websocket_handler(request.url().path()) {
                     Some(handler) => {
                         let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
                         Server::<T>::dispatch_write(&socket, response).await?;
@@ -498,7 +498,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
 
         if let Some(log_string) = &*self.log_string {
-            log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+            log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.url().path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
 
         Server::<T>::dispatch_write(&socket, response).await?;

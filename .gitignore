@@ -1,2 +1,4 @@
-/target
-Cargo.lock
+**/target
+**/Cargo.lock
+cataclysm/examples/chat_room
+cataclysm/examples/chat_room.rs

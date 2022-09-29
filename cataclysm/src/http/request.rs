@@ -14,7 +14,7 @@ pub struct Request {
     /// How deep in the tree this endpoint finds itself (set by the pure branch)
     pub(crate) depth: usize,
     /// headers from the request
-    pub headers: HashMap<String, String>,
+    pub(crate) headers: HashMap<String, Vec<String>>,
     /// Header size in bytes
     pub(crate) header_size: usize,
     /// Address from the request
@@ -23,19 +23,19 @@ pub struct Request {
 }
 
 impl Request {
-    /// Returns the path from this request
-    pub fn path(&self) -> &str {
-        self.url.path()
-    }
-
-    /// Returns the query part of this request
-    pub fn query(&self) -> Option<&str> {
-        self.url.query()
+    /// Returns the [Url](https://docs.rs/url/latest/url/struct.Url.html) object for this request
+    pub fn url(&self) -> &Url {
+        &self.url
     }
 
     /// Returns the IP address from which this call has been made
     pub fn address(&self) -> std::net::SocketAddr {
         self.addr
+    }
+
+    /// Returns the body as bytes of the content
+    pub fn body(&self) -> &Vec<u8> {
+        &self.content
     }
 
     pub(crate) fn parse(mut source: Vec<u8>, addr: std::net::SocketAddr) -> Result<Request, Error> {
@@ -78,14 +78,15 @@ impl Request {
             let idx = line.find(":").ok_or(Error::Parse(format!("corrupted header missing colon")))?;
             let (key, value) = line.split_at(idx);
             let (key, value) = (key.to_string(), value.trim_start_matches(": ").trim_end().to_string());
-            headers.insert(key, value);
+            headers.entry(key).or_insert_with(|| Vec::new()).push(value);
         }
 
         if !version.starts_with("HTTP") {
             return Err(Error::Parse("unsupported protocol".into()))
         }
         // And we construct the request
-        let url = Url::parse(&format!("http://{}{}",headers.get("Host").cloned().unwrap_or("missing.host".to_string()), path)).map_err(Error::Url)?;
+        let host = headers.get("Host").map(|h| h.get(0).map(|v| &v[..])).flatten().unwrap_or_else(|| "missing.host");
+        let url = Url::parse(&format!("http://{}{}", host, path)).map_err(Error::Url)?;
         //let _version = tokens[2];
         // Parse following lines
         Ok(Request {

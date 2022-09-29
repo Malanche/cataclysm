@@ -45,7 +45,7 @@ impl Multipart {
 
 impl<T: Sync> Extractor<T> for Multipart {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(content_type) = req.headers.get("Content-Type") {
+        if let Some(content_type) = req.headers.get("Content-Type").map(|ct| ct.get(0)).flatten() {
             if let Some((multipart_tag, boundary_pair)) = content_type.trim().split_once(";") {
                 if multipart_tag == "multipart/form-data" {
                     if let Some((tag, boundary)) = boundary_pair.trim().split_once("=") {
