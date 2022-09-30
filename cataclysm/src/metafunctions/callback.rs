@@ -3,13 +3,7 @@ use crate::{
     http::{Response, Request}
 };
 #[cfg(feature = "ws")]
-use crate::ws::{WebSocketWriter, WebSocketReader};
-#[cfg(feature = "demon")]
-use apocalypse::Gate;
-#[cfg(feature = "demon")]
-use tokio::net::tcp::OwnedReadHalf;
-#[cfg(feature = "demon")]
-use crate::Error;
+use crate::ws::{WebSocketThread, WebSocketWriter};
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
@@ -38,10 +32,7 @@ pub type CoreFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<dyn Futu
 pub type LayerFn<T> = Box<dyn Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 /// Type representing a websocket handler function
 #[cfg(feature = "ws")]
-pub type WebSocketFn = Box<dyn Fn(WebSocketWriter) -> Pin<Box<dyn Future<Output = Box<dyn WebSocketReader>> + Send>> + Send + Sync>;
-/// Type representing a websocket-demon handler function
-#[cfg(feature = "demon")]
-pub type WebSocketDemonFn = Box<dyn Fn(WebSocketWriter, Gate, OwnedReadHalf) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> + Send + Sync>;
+pub type WebSocketFn = Box<dyn Fn(WebSocketThread, WebSocketWriter) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {

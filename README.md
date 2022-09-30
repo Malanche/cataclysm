@@ -1,6 +1,6 @@
-# Cataclysm. A simple rust http server
+# Cataclysm ⛈. A simple rust http server
 
-**Work in progress**: The work is completely unusable in its current state, but updates will come soon until a full HTTP/1.1 server is functional. This legend will be removed when such a state is reached.
+**Work in progress**: The work is now partially usable in its current state, but updates will keep comming until a full HTTP/1.1 server is functional. This legend will be removed when such a state is reached.
 
 Cataclysm is an http framework influenced by [actix-web](https://actix.rs/), and built over [tokio](https://tokio.rs/). A minimal working example is the following
 

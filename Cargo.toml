@@ -1,5 +1,7 @@
 [workspace]
 members = [
     "cataclysm",
-    "cataclysm-ws"
+    "cataclysm-ws",
+    # Internal
+    "examples"
 ]

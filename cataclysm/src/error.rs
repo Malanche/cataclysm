@@ -15,12 +15,6 @@ pub enum Error {
     Ring(ring::error::Unspecified),
     /// Indicates that no session creator was set
     NoSessionCreator,
-    /// Indicates that no gate was provided to spawn demons
-    #[cfg(feature = "demon")]
-    MissingGate,
-    /// Internal error in apocalypse
-    #[cfg(feature = "demon")]
-    Apocalypse(apocalypse::Error),
     /// Custom error, try to avoid its use
     Custom(String)
 }
@@ -42,10 +36,6 @@ impl std::fmt::Display for Error {
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
             Error::Ring(e) => format!("ring error: {}", e),
             Error::NoSessionCreator => format!("the session extractor requires a SessionCreator struct to work, see documentation"),
-            #[cfg(feature = "demon")]
-            Error::MissingGate => format!("for demon spawning, a gate must be provided to the server through the builder"),
-            #[cfg(feature = "demon")]
-            Error::Apocalypse(inner_error) => format!("apocalypse error, {}", inner_error),
             Error::Custom(e) => format!("{}", e)
         };
         write!(formatter, "{}", content)

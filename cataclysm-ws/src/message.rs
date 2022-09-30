@@ -1,16 +1,16 @@
 /// Message structure contained in a frame
 pub enum Message {
     Text(String),
-    Bytes(Vec<u8>),
+    Binary(Vec<u8>),
     Ping,
     Pong
 }
 
-impl Message {
-    pub fn to_bytes(self) -> Vec<u8> {
-        match self {
+impl From<Message> for Vec<u8> {
+    fn from(source: Message) -> Vec<u8> {
+        match source {
             Message::Text(content) => content.into(),
-            Message::Bytes(content) => content,
+            Message::Binary(content) => content,
             Message::Ping => vec![],
             Message::Pong => vec![]
         }

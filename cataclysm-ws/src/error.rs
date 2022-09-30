@@ -8,7 +8,9 @@ pub enum Error {
     /// Indicate sthat the connection was closed abruptly
     ConnectionReset,
     /// Indicates a websockets Incomplete Message
-    Incomplete
+    Incomplete,
+    /// Unsupported Operation Code
+    UnsupportedOpCode
 }
 
 impl std::fmt::Display for Error {
@@ -18,6 +20,7 @@ impl std::fmt::Display for Error {
             Error::Parse(detail) => format!("parse error: {}", detail),
             Error::ConnectionReset => format!("connection reset by peer"),
             Error::Incomplete => format!("incomplete frame message in ws connection"),
+            Error::UnsupportedOpCode => format!("the op code received is not supported")
         };
         write!(formatter, "{}", content)
     }

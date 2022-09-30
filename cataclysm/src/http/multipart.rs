@@ -5,7 +5,6 @@ use std::sync::Arc;
 /// File contained in a multipart call
 #[derive(Clone, Debug)]
 pub struct File {
-    pub name: String,
     pub filename: Option<String>,
     pub content_type: Option<String>,
     pub content: Vec<u8>
@@ -28,18 +27,32 @@ pub struct File {
 /// }
 /// ```
 pub struct Multipart {
-    raw_files: HashMap<String, File>
+    raw_files: HashMap<String, Vec<File>>
 }
 
 impl Multipart {
     /// Retrieves a file from the multipart request by its name in the form
-    pub fn file_by_name<A: AsRef<str>>(&self, name: A) -> Option<&File> {
+    pub fn files<A: AsRef<str>>(&self, name: A) -> Option<&Vec<File>> {
         self.raw_files.get(name.as_ref())
     }
 
-    /// Retrieves all files contained in the multipart as a vector
-    pub fn files(&self) -> Vec<&File> {
-        self.raw_files.iter().map(|(_n, v)| v).collect()
+    /// Returns an iterator to the tuples that contain the identifying name of the multipart, and the files that were found associated to the name
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<File>)> {
+        self.raw_files.iter()
+    }
+
+    /// Returns a mutable iterator to the tuples that contain the identifying name of the multipart, and the files that were found associated to the name
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut Vec<File>)> {
+        self.raw_files.iter_mut()
+    }
+}
+
+impl IntoIterator for Multipart {
+    type Item = (String, Vec<File>);
+    type IntoIter = std::collections::hash_map::IntoIter<String, Vec<File>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.raw_files.into_iter()
     }
 }
 
@@ -121,20 +134,16 @@ impl<T: Sync> Extractor<T> for Multipart {
                                 // We have to remove the `\r\n\r\n` that is at the beginning of the remaining bytes
                                 let (_, inner_content) = inner_content.split_at(4);
 
-                                let mut file = File {
-                                    name: "".into(),
-                                    filename: None,
-                                    content_type: None,
-                                    content: inner_content.to_vec()
-                                };
-                                let mut name_set = false;
+                                let mut multipart_name: Option<&str> = None;
+                                let mut multipart_filename: Option<&str> = None;
+                                let mut multipart_content_type: Option<String> = None;
+                                let multipart_content = inner_content.to_vec();
 
                                 for line in inner_header.split("\r\n") {
                                     if let Some((tag, details)) = line.split_once(": ") {
                                         match tag {
                                             "Content-Disposition" => {
                                                 let mut token_iter = details.split("; ");
-                                                let mut pairs = HashMap::new();
                                                 // The first token needs to be "form-data"
                                                 if let Some(form_data_candidate) = token_iter.next() {
                                                     if form_data_candidate != "form-data" {
@@ -143,27 +152,45 @@ impl<T: Sync> Extractor<T> for Multipart {
 
                                                     for remaining_token in token_iter {
                                                         if let Some((key, value)) = remaining_token.split_once("=") {
-                                                            pairs.insert(key, value);
+                                                            if key == "name" {
+                                                                // We need to remove the surrounding quoted
+                                                                if let Some(unquoted) = value.strip_prefix("\"").map(|v| v.strip_suffix("\"")).flatten() {
+                                                                    multipart_name = Some(unquoted);
+                                                                } else {
+                                                                    #[cfg(feature = "full_log")]
+                                                                    log::debug!("multipart field will be ignored as `name` had no surrounding quotes")
+                                                                }
+                                                            } else if key == "filename" {
+                                                                // We need to remove the surrounding quoted
+                                                                if let Some(unquoted) = value.strip_prefix("\"").map(|v| v.strip_suffix("\"")).flatten() {
+                                                                    multipart_filename = Some(unquoted);
+                                                                } else {
+                                                                    #[cfg(feature = "full_log")]
+                                                                    log::debug!("multipart `filename` will be ignored as it had no surrounding quotes")
+                                                                }
+                                                            }
                                                         }
                                                     }
-
-                                                    file.name = pairs.get("name").ok_or_else(|| Error::ExtractionBR(format!("a name for the multipart was not found")))?.to_string();
-
-                                                    file.filename = pairs.get("filename").map(|v| {
-                                                        if v.len() > 2 {
-                                                            v[1..v.len()-1].to_string()
-                                                        } else {
-                                                            v.to_string()
-                                                        }
-                                                    });
-                                                    name_set = true;
                                                 } else {
                                                     return Err(Error::ExtractionBR(format!("Content-Disposition header seems to be empty")))
                                                 }
                                             },
                                             "Content-Type" => {
-                                                file.content_type = Some(details.into());
+                                                multipart_content_type = Some(details.into());
                                             },
+                                            "Content-Length" => {
+                                                match details.parse::<usize>() {
+                                                    Ok(val) => {
+                                                        if val != multipart_content.len() {
+                                                            return Err(Error::ExtractionBR(format!("Content-Length of multipart part does not match the size of the content")))
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        return Err(Error::ExtractionBR(format!("Content-Length of multipart part could not be parse as an integer, {}", e)))
+                                                    }
+                                                }
+                                            },
+                                            // Any other type of header will be ignored
                                             _ => ()
                                         }
                                     } else {
@@ -171,11 +198,15 @@ impl<T: Sync> Extractor<T> for Multipart {
                                     }
                                 }
 
-                                if !name_set {
-                                    return Err(Error::ExtractionBR(format!("a component of the multipart was found to have no name")));
-                                }
+                                let file = File {
+                                    filename: multipart_filename.map(|s| s.to_string()),
+                                    content_type: multipart_content_type.map(|s| s.to_string()),
+                                    content: multipart_content
+                                };
+
+                                let name = multipart_name.ok_or_else(|| Error::ExtractionBR(format!("a name for a part of the multipart was not found")))?.to_string();
                 
-                                raw_files.insert(file.name.clone(), file);
+                                raw_files.entry(name).or_insert_with(|| Vec::new()).push(file);
                             }
                             
                             Ok(Multipart {

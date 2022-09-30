@@ -14,3 +14,4 @@ tokio = {version = "1.11.0", features = ["full"]}
 async-trait = "0.1.51"
 log = "0.4.14"
 bytes = "1.1.0"
+rand = "0.8.5"

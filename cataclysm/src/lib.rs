@@ -41,8 +41,6 @@ mod cors;
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
 #[cfg(feature = "ws")]
 pub(crate) use self::metafunctions::{WebSocketFn};
-#[cfg(feature = "demon")]
-pub(crate) use self::metafunctions::{WebSocketDemonFn};
 mod metafunctions;
 
 /// Contains usefull stuff for session management

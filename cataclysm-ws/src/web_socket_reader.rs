@@ -15,10 +15,11 @@ pub trait WebSocketReader: Send {
     ///
     /// This function gets called back when a [Message](crate::Message) is received.
     async fn on_message(&mut self, message: Message);
+    
     /// On opened connection
     ///
     /// This function gets called when the websockets connection is closed (either gracefully, or by an error)
-    async fn on_close(&mut self) {
+    async fn on_close(&mut self, _clean: bool) {
         ()
     }
 }

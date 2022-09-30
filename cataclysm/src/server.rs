@@ -10,8 +10,6 @@ use crate::{
 };
 #[cfg(feature = "ws")]
 use crate::ws::{WebSocketThread, WebSocketWriter};
-#[cfg(feature = "demon")]
-use apocalypse::Gate;
 use std::sync::{Arc};
 
 // Default max connections for the server
@@ -29,9 +27,7 @@ pub struct ServerBuilder<T> {
     log_string: Option<String>,
     cors: Option<Cors>,
     max_connections: usize,
-    timeout: std::time::Duration,
-    #[cfg(feature = "demon")]
-    gate: Option<Gate>
+    timeout: std::time::Duration
 }
 
 impl<T: Sync + Send> ServerBuilder<T> {
@@ -51,9 +47,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
             log_string: None,
             cors: None,
             max_connections: MAX_CONNECTIONS,
-            timeout: std::time::Duration::from_millis(15_000),
-            #[cfg(feature = "demon")]
-            gate: None
+            timeout: std::time::Duration::from_millis(15_000)
         }
     }
 
@@ -186,15 +180,6 @@ impl<T: Sync + Send> ServerBuilder<T> {
         self
     }
 
-    /// Sets up a gate for demon spawning
-    ///
-    /// See the [demon_factory](crate::Branch::demon_factory) documentation from the [Branch](crate::Branch) structure for more details about this function.
-    #[cfg(feature = "demon")]
-    pub fn gate(mut self, gate: Gate) -> Self {
-        self.gate = Some(gate);
-        self
-    }
-
     /// Builds the server
     ///
     /// ```rust,no_run
@@ -225,9 +210,7 @@ impl<T: Sync + Send> ServerBuilder<T> {
             log_string: Arc::new(self.log_string),
             cors: Arc::new(self.cors),
             max_connections: Arc::new(Semaphore::new(self.max_connections)),
-            timeout: Arc::new(self.timeout),
-            #[cfg(feature = "demon")]
-            gate: Arc::new(self.gate.ok_or_else(|| Error::MissingGate)?)
+            timeout: Arc::new(self.timeout)
         }))
     }
 }
@@ -241,9 +224,7 @@ pub struct Server<T> {
     log_string: Arc<Option<String>>,
     cors: Arc<Option<Cors>>,
     max_connections: Arc<Semaphore>,
-    timeout: Arc<std::time::Duration>,
-    #[cfg(feature = "demon")]
-    gate: Arc<Gate>
+    timeout: Arc<std::time::Duration>
 }
 
 impl<T: 'static + Sync + Send> Server<T> {
@@ -438,30 +419,15 @@ impl<T: 'static + Sync + Send> Server<T> {
                 let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
                 let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
 
-                // We check if there is a demon handler
-                #[cfg(feature = "demon")]
-                match self.pure_branch.websocket_demon_handler(request.url().path()) {
-                    Some(handler) => {
-                        let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
-                        Server::<T>::dispatch_write(&socket, response).await?;
-                        let (owned_read, owned_write) = socket.into_split();
-                        let web_socket_writer = WebSocketWriter::new(owned_write);
-                        handler(web_socket_writer, (*self.gate).clone(), owned_read).await?;
-                        return Ok(())
-                    },
-                    None => {
-                        // Nothing found, we go to the normal websocket handler
-                    }
-                }
-
                 // We request a websocket handler
                 match self.pure_branch.websocket_handler(request.url().path()) {
                     Some(handler) => {
                         let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
                         Server::<T>::dispatch_write(&socket, response).await?;
                         let (owned_read, owned_write) = socket.into_split();
-                        let web_socket_writer = WebSocketWriter::new(owned_write);
-                        WebSocketThread::spawn(owned_read, handler(web_socket_writer).await);
+                        let wst = WebSocketThread::new(owned_read);
+                        let wsw = WebSocketWriter::new(owned_write);
+                        handler(wst, wsw).await;
                     },
                     None => {
                         Server::<T>::dispatch_write(&socket, Response::not_found()).await?;

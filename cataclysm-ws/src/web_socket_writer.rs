@@ -21,9 +21,8 @@ impl WebSocketWriter {
         }
     }
 
-    /// Sends a text message through the websockets connection
-    pub async fn text<A: Into<String>>(&self, text: A) -> Result<(), Error> {
-        let content = Frame::text(text).bytes();
+    async fn write<A: Into<Vec<u8>>>(&self, content: A) -> Result<(), Error> {
+        let content: Vec<u8> = content.into();
         loop {
             // Wait for the socket to be writable
             let stream: &TcpStream = self.write_stream.as_ref();
@@ -41,5 +40,20 @@ impl WebSocketWriter {
                 Err(e) => break Err(Error::Io(e))
             }
         }
+    }
+
+    /// Sends a text message through the websockets connection
+    pub async fn text<A: Into<String>>(&self, text: A) -> Result<(), Error> {
+        self.write(Frame::text(text)).await
+    }
+
+    /// Sends a text message through the websockets connection
+    pub async fn bytes<A: Into<Vec<u8>>>(&self, bytes: A) -> Result<(), Error> {
+        self.write(Frame::binary(bytes)).await
+    }
+
+    /// Closes the write part of the socket
+    pub async fn close(&self) -> Result<(), Error> {
+        self.write(Frame::close()).await
     }
 }

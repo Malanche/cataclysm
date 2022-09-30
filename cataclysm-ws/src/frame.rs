@@ -59,6 +59,7 @@ impl Frame {
         let inner_op_code = (candidate[0] << 4) >> 4;
         let mut payload = candidate.get(offset..offset+length).ok_or_else(|| Error::Incomplete)?.to_vec();
         if let Some(masking_key) = &masking_key {
+            // We decode the content in case we have a masking key
             payload = payload.into_iter().enumerate().map(|(idx, v)| {
                 // According to rfc 6455
                 let j = idx % 4;
@@ -67,10 +68,11 @@ impl Frame {
         }
         let message = match inner_op_code {
             Frame::OP_CODE_TEXT => Some(Message::Text(String::from_utf8(payload).map_err(|e| Error::Parse(format!("{}", e)))?)),
+            Frame::OP_CODE_BINARY => Some(Message::Binary(payload)),
+            Frame::OP_CODE_PING => Some(Message::Ping),
+            Frame::OP_CODE_PONG => Some(Message::Pong),
             Frame::OP_CODE_CLOSE => None,
-            Frame::OP_CODE_PING => None,
-            Frame::OP_CODE_PONG => None,
-            _ => panic!("Not supported")
+            _ => return Err(Error::UnsupportedOpCode)
         };
 
         Ok(Frame {
@@ -91,24 +93,62 @@ impl Frame {
         }
     }
 
-    /// Returns the frame as a byte vector
-    pub fn bytes(self) -> Vec<u8> {
-        let mut content = vec![Frame::FIN_RSV ^ self.inner_op_code];
-        let mut payload = self.message.map(|m| m.to_bytes());
+    /// Creates a binary frame
+    pub fn binary<A: Into<Vec<u8>>>(binary: A) -> Frame {
+        let payload = binary.into();
+        let message = Some(Message::Binary(payload));
+        Frame {
+            inner_op_code: Frame::OP_CODE_BINARY,
+            masking_key: None,
+            message
+        }
+    }
+
+    /// Creates a close frame
+    pub fn close() -> Frame {
+        let masking_key = Some(rand::random::<u32>());
+        Frame {
+            inner_op_code: Frame::OP_CODE_CLOSE,
+            masking_key,
+            message: None
+        }
+    }
+
+    /// Takes the frame and returns the contained message, if any
+    pub fn get_message(&self) -> Option<&Message> {
+        self.message.as_ref()
+    }
+
+    /// Indicates if this frame is a closing frame
+    pub fn is_close(&self) -> bool {
+        self.inner_op_code == Frame::OP_CODE_CLOSE
+    }
+}
+
+impl From<Frame> for Option<Message> {
+    fn from(source: Frame) -> Option<Message> {
+        source.message
+    }
+}
+
+impl From<Frame> for Vec<u8> {
+    fn from(source: Frame) -> Vec<u8> {
+        let mut content = vec![Frame::FIN_RSV ^ source.inner_op_code];
+        let mut payload: Option<Vec<u8>> = source.message.map(|m| m.into());
         let payload_length = payload.iter().map(|m| m.len()).next().unwrap_or(0);
         if payload_length < 126 {
-            content.push(payload_length as u8 | if self.masking_key.is_some() {0x80} else {0x00});
+            content.push(payload_length as u8 | if source.masking_key.is_some() {0x80} else {0x00});
         } else if payload_length <= u16::MAX.into() /*65535*/{
-            content.push(126u8 | if self.masking_key.is_some() {0x80} else {0x00});
+            content.push(126u8 | if source.masking_key.is_some() {0x80} else {0x00});
             // And now we push the length as u16
             content.extend((payload_length as u16).to_be_bytes());
         } else {
-            content.push(127u8 | if self.masking_key.is_some() {0x80} else {0x00});
+            content.push(127u8 | if source.masking_key.is_some() {0x80} else {0x00});
             // And now we push the length as u16
             content.extend((payload_length as u64).to_be_bytes());
         }
 
-        if let Some(masking_key) = &self.masking_key {
+        if let Some(masking_key) = &source.masking_key {
             let masking_bytes = masking_key.to_be_bytes();
             payload = payload.map(|b| b.into_iter().enumerate().map(|(idx, v)| {
                 // According to rfc 6455
@@ -122,10 +162,5 @@ impl Frame {
         }
         
         content
-    }
-
-    /// Takes the frame and returns the contained message, if any
-    pub fn into_message(self) -> Option<Message> {
-        self.message
     }
 }
