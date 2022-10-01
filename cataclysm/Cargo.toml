@@ -38,7 +38,7 @@ url = "2.2.2"
 serde_qs = "0.10.1"
 async-trait = "0.1.56"
 bytes = "1.1.0"
-cataclysm-ws = {version = "0.1.1", path="../cataclysm-ws", optional = true}
+cataclysm-ws = {version = "0.1.2", path="../cataclysm-ws", optional = true}
 
 [[bench]]
 name = "per_second"
