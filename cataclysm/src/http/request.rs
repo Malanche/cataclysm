@@ -13,8 +13,8 @@ pub struct Request {
     pub(crate) variable_indices: Vec<usize>,
     /// How deep in the tree this endpoint finds itself (set by the pure branch)
     pub(crate) depth: usize,
-    /// headers from the request
-    pub(crate) headers: HashMap<String, Vec<String>>,
+    /// Header map for the request
+    pub headers: HashMap<String, Vec<String>>,
     /// Header size in bytes
     pub(crate) header_size: usize,
     /// Address from the request
@@ -23,6 +23,11 @@ pub struct Request {
 }
 
 impl Request {
+    /// Returns the [Url](https://docs.rs/url/latest/url/struct.Url.html) object for this request
+    pub fn method(&self) -> &Method {
+        &self.method
+    }
+    
     /// Returns the [Url](https://docs.rs/url/latest/url/struct.Url.html) object for this request
     pub fn url(&self) -> &Url {
         &self.url
