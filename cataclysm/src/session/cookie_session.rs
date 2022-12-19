@@ -191,24 +191,28 @@ impl CookieSession {
             req.headers.get("cookie").unwrap_or_else(|| &empty)
         ].into_iter().flatten();
         for cookie_header in cookie_headers {
-            let cookie = Cookie::parse_encoded(cookie_header).map_err(|e| Error::custom(format!("{}", e)))?;
-            let value = cookie.value();
-            // The hmac value is at least 44 bytes
-            if value.len() < 44 {
-                return Err(Error::custom("length of cookie cannot contain even the hmac value"));
-            } else {
-                // I know these unwraps look unsafe, but trust me, they are, TODO FIX with let Some
-                let signature = value.get(0..44).unwrap();
-                let content = value.get(44..value.len()).unwrap();
-
-                // First, we try to decode the content
-                let values = serde_json::from_str(content).map_err(|e| Error::custom(format!("{}", e)))?;
-
-                let tag = base64::decode(signature).map_err(|e| Error::custom(format!("{}", e)))?;
-
-                hmac::verify(&self.key, content.as_bytes(), &tag).map_err(|e| Error::custom(format!("{}", e)))?;
-
-                return Ok(Some(Session::new_with_values(self.clone(), values)))
+            for single_cookie in cookie_header.split("; ") {
+                let cookie = Cookie::parse_encoded(single_cookie).map_err(|e| Error::custom(format!("{}", e)))?;
+                if cookie.name() == self.cookie_name {
+                    let value = cookie.value();
+                    // The hmac value is at least 44 bytes
+                    if value.len() < 44 {
+                        return Err(Error::custom("length of cookie cannot contain even the hmac value"));
+                    } else {
+                        // I know these unwraps look unsafe, but trust me, they are, TODO FIX with let Some
+                        let signature = value.get(0..44).unwrap();
+                        let content = value.get(44..value.len()).unwrap();
+        
+                        // First, we try to decode the content
+                        let values = serde_json::from_str(content).map_err(|e| Error::custom(format!("{}", e)))?;
+        
+                        let tag = base64::decode(signature).map_err(|e| Error::custom(format!("{}", e)))?;
+        
+                        hmac::verify(&self.key, content.as_bytes(), &tag).map_err(|e| Error::custom(format!("{}", e)))?;
+        
+                        return Ok(Some(Session::new_with_values(self.clone(), values)))
+                    }
+                }
             }
         }
         Ok(None)
