@@ -96,6 +96,7 @@ impl<K, R> StreamCallback<()> for K where K: Fn(Stream) -> R, R: Future<Output =
 }
 
 /// This macro implements the trait for a given indexed tuple
+#[cfg(feature = "stream")]
 macro_rules! stream_callback_for_many {
     ($struct_name:ident $index:tt) => {
         impl<K, R, $struct_name> StreamCallback<($struct_name, )> for K where K: Fn(Stream, $struct_name) -> R, R: Future<Output = ()> + Send + 'static {
@@ -113,10 +114,15 @@ macro_rules! stream_callback_for_many {
     }
 }
 
+#[cfg(feature = "stream")]
 stream_callback_for_many!(A 0);
+#[cfg(feature = "stream")]
 stream_callback_for_many!(A 0, B 1);
+#[cfg(feature = "stream")]
 stream_callback_for_many!(A 0, B 1, C 2);
+#[cfg(feature = "stream")]
 stream_callback_for_many!(A 0, B 1, C 2, D 3);
+#[cfg(feature = "stream")]
 stream_callback_for_many!(A 0, B 1, C 2, D 3, E 4);
 
 /*
