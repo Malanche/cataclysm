@@ -6,8 +6,9 @@ use crate::{
     CoreFn, LayerFn, Extractor, Callback, Pipeline,
     http::{Method, Request, Response, MethodHandler}
 };
-#[cfg(feature = "ws")]
-use crate::{WebSocketFn, ws::{WebSocketThread, WebSocketWriter, WebSocketHandler}};
+use crate::metafunctions::callback::PipelineKind;
+#[cfg(feature = "stream")]
+use crate::{HandlerFn, StreamCallback, Stream};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -28,6 +29,7 @@ enum BranchKind {
 /// 1. Exact matching
 /// 2. Pattern matching
 /// 3. Default branches (a.k.a, variable handling in branches)
+/// 4. Stream handler
 ///
 /// In the case of exact matching, the path constructor is pretty straight forward
 ///
@@ -79,9 +81,9 @@ pub struct Branch<T> {
     files_callback: Option<Arc<CoreFn<T>>>,
     /// Layer functions on this branch
     layers: Vec<Arc<LayerFn<T>>>,
-    /// Websocket endpoint, if enabled
-    #[cfg(feature = "ws")]
-    websocket_callback: Option<Arc<WebSocketFn>>
+    /// Stream handler, when no other match was found
+    #[cfg(feature = "stream")]
+    stream_handler: Option<Arc<HandlerFn<T>>>
 }
 
 impl<T> std::fmt::Display for Branch<T> {
@@ -131,8 +133,8 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback: None,
             default_callback: None,
             files_callback: None,
-            #[cfg(feature = "ws")]
-            websocket_callback: None,
+            #[cfg(feature = "stream")]
+            stream_handler: None,
             layers: vec![]
         };
         let (base, rest_branch) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
@@ -339,8 +341,8 @@ impl<T: Sync + Send> Branch<T> {
             default_method_callback,
             default_callback,
             files_callback,
-            #[cfg(feature = "ws")]
-            websocket_callback,
+            #[cfg(feature = "stream")]
+            stream_handler,
             ..
         } = other;
         // If an exact match is found, we merge
@@ -396,10 +398,10 @@ impl<T: Sync + Send> Branch<T> {
             self.files_callback = files_callback;
         }
 
-        #[cfg(feature = "ws")]
+        #[cfg(feature = "stream")]
         // Priority for the lhs branch
-        if self.websocket_callback.is_none() {
-            self.websocket_callback = websocket_callback;
+        if self.stream_handler.is_none() {
+            self.stream_handler = stream_handler;
         }
     }
 
@@ -479,57 +481,47 @@ impl<T: Sync + Send> Branch<T> {
         self
     }
 
-    /// Callback handler for websocket connections
-    ///
-    /// This method requires the implentation of the [WebSocketReader](crate::ws::WebSocketReader) trait for one structure, and the [WebSocketFactory](crate::ws::WebSocketFactory) trait for another.
+    /// Callback handler for direct stream manipulation
     /// 
     /// ```rust,no_run
-    /// use cataclysm::{ws::{WebSocketThread, WebSocketWriter, WebSocketReader, WebSocketHandler, Message}, Server, Branch};
+    /// use cataclysm::{Server, Branch, Stream};
     /// use std::sync::Arc;
     /// 
-    /// struct Example{
-    ///     web_socket_writer: WebSocketWriter
-    /// }
-    /// 
-    /// impl Example {
-    ///     fn new(web_socket_writer: WebSocketWriter) -> Example {
-    ///         Example{web_socket_writer}
-    ///     }
-    /// }
-    /// 
-    /// #[async_trait::async_trait]
-    /// impl WebSocketReader for Example {
-    ///     async fn on_message(&mut self, message: Message) {
-    ///         // ... do something
-    ///     }
-    /// }
-    ///
-    /// struct Handler;
-    ///
-    /// #[async_trait::async_trait]
-    /// impl WebSocketHandler for Handler {
-    ///     async fn create(self: Arc<Self>, wst: WebSocketThread, wsw: WebSocketWriter) {
-    ///         wst.spawn(web_socket_writer);
-    ///     }
+    /// async fn deal_with_stream(stream: Stream) {
+    ///     // do something with the stream...
     /// }
     /// 
     /// #[tokio::main]
     /// async fn main() {
     ///     let branch: Branch<()> = Branch::new("/")
-    ///         .nest(Branch::new("/ws").websocket_handler(Handler))
+    ///         .nest(Branch::new("/ws").stream_handler(deal_with_stream))
     ///         .files("./static")
     ///         .defaults_to_file("./static/index.html");
     ///     let server = Server::builder(branch).build().unwrap();
     ///     server.run("127.0.0.1:8000").await.unwrap();
     /// }
     /// ```
-    #[cfg(feature = "ws")]
-    pub fn websocket_handler<F: 'static + WebSocketHandler + Send + Sync>(mut self, factory: F) -> Self {
+    #[cfg(feature = "stream")]
+    pub fn stream_handler<F: StreamCallback<A> + Send + Sync + 'static, A: Extractor<T>>(mut self, handler: F) -> Self {
+        // We get the top node from the current branch
         let source = self.source.clone();
         let top_branch = self.get_branch(source).unwrap();
-        let factory = Arc::new(factory);
-        top_branch.websocket_callback = Some(Arc::new(Box::new(move |wst: WebSocketThread, wsw: WebSocketWriter| {
-            factory.clone().create(wst, wsw).boxed()
+        top_branch.stream_handler = Some(Arc::new(Box::new(move |req: Request, additional: Arc<Additional<T>>, stream: Stream|  {
+            match <A as Extractor<T>>::extract(&req, additional) {
+                Ok(args) => handler.invoke(stream, args).boxed(),
+                Err(_e) => {
+                    #[cfg(feature = "full_log")]
+                    log::error!("extractor error: {}", _e);
+                    // We use the stream to send the request
+                    (async move {match stream.reply(Response::bad_request()).await {
+                        Ok(_) => (),
+                        Err(_e) => {
+                            #[cfg(feature = "full_log")]
+                            log::debug!("stream reply error: {}", _e);
+                        }
+                    };}).boxed()
+                }
+            }
         })));
         self
     }
@@ -547,8 +539,8 @@ impl<T: Sync + Send> Branch<T> {
             default_callback: self.default_callback,
             files_callback: self.files_callback,
             layers: self.layers,
-            #[cfg(feature = "ws")]
-            websocket_callback: self.websocket_callback
+            #[cfg(feature = "stream")]
+            stream_handler: self.stream_handler
         }
     }
 
@@ -601,10 +593,17 @@ impl<T: Sync + Send> Branch<T> {
 }
 
 /// Structure that holds information to process a callback properly
-struct CallbackInformation<T> {
-    callback: Arc<CoreFn<T>>,
-    layers: Vec<Arc<LayerFn<T>>>,
-    variable_indicators: Vec<bool>
+enum CallbackInformation<T> {
+    ResponseHandler {
+        callback: Arc<CoreFn<T>>,
+        layers: Vec<Arc<LayerFn<T>>>,
+        variable_indicators: Vec<bool>
+    },
+    #[cfg(feature = "stream")]
+    StreamHandler {
+        callback: Arc<HandlerFn<T>>,
+        variable_indicators: Vec<bool>
+    }
 }
 
 /// Structure for internal use only.
@@ -619,70 +618,43 @@ pub(crate) struct PureBranch<T> {
     default_callback: Option<Arc<CoreFn<T>>>,
     files_callback: Option<Arc<CoreFn<T>>>,
     layers: Vec<Arc<LayerFn<T>>>,
-    #[cfg(feature = "ws")]
-    websocket_callback: Option<Arc<WebSocketFn>>
+    #[cfg(feature = "stream")]
+    stream_handler: Option<Arc<HandlerFn<T>>>
 }
 
 impl<T> PureBranch<T> {
-    /// Returns a web socket handler, if any
-    #[cfg(feature = "ws")]
-    pub(crate) fn websocket_handler<A: AsRef<str>>(&self, trail: A) -> Option<Arc<WebSocketFn>> {
-        // Tokenizamos la cadena
-        let trimmed_trail = trail.as_ref().trim_start_matches("/");
-        
-        let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
-            (base.to_string(), rest.to_string())
-        } else {
-            // Only one token here
-            if trimmed_trail.is_empty() {
-                return self.websocket_callback.clone();
-            } else {
-                (trimmed_trail.to_string(), "".to_string())
-            }
-        };
-
-        // Now we check if any nested branch has something
-        let mut result = None;
-        
-        // First, exact matching through hash lookup
-        if let Some(branch) = self.exact_branches.get(&base) {
-            result = branch.websocket_handler(rest);
-        } else {
-            // Now, O(n) regex pattern matching
-            for (pattern, branch) in self.pattern_branches.iter() {
-                if pattern.is_match(&base) {
-                    result = branch.websocket_handler(&rest);
-                    break;
-                }
-            }
-
-            if result.is_none() {
-                // Finally, if there is a variable, we reply (constant time)
-                if let Some((_id, branch)) = &self.variable_branch {
-                    result = branch.websocket_handler(rest);
-                }
-            }
-        }
-        result
-    }
-
     /// Creates the pipeline of futures to be processed by the server
-    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<Pipeline<T>> {
+    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<PipelineKind<T>> {
         // We get the core handler, and the possible layers
         if let Some(c_info) = self.callback_information(request.url().path(), &request.method) {
-            // We have to update the variable locations
-            request.depth = c_info.variable_indicators.len();
+            match c_info {
+                CallbackInformation::ResponseHandler{callback, layers, variable_indicators} => {
+                    // We have to update the variable locations
+                    request.depth = variable_indicators.len();
 
-            request.variable_indices = c_info.variable_indicators
-                .iter().rev().enumerate().filter(|(_idx, v)| **v)
-                .map(|(idx, _v)| idx).collect();
+                    request.variable_indices = variable_indicators
+                        .iter().rev().enumerate().filter(|(_idx, v)| **v)
+                        .map(|(idx, _v)| idx).collect();
 
-            let mut pipeline_layer = Pipeline::Core(Arc::clone(&c_info.callback));
-            for function in &c_info.layers {
-                pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
+                    let mut pipeline_layer = Pipeline::Core(Arc::clone(&callback));
+                    for function in &layers {
+                        pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
+                    }
+                    // We return the nested pipeline
+                    Some(PipelineKind::NormalPipeline(pipeline_layer))
+                },
+                #[cfg(feature = "stream")]
+                CallbackInformation::StreamHandler{callback, variable_indicators} => {
+                    // We have to update the variable locations
+                    request.depth = variable_indicators.len();
+
+                    request.variable_indices = variable_indicators
+                        .iter().rev().enumerate().filter(|(_idx, v)| **v)
+                        .map(|(idx, _v)| idx).collect();
+                    
+                    Some(PipelineKind::StreamPipeline(callback))
+                }
             }
-            // We return the nested pipeline
-            Some(pipeline_layer)
         } else {
             None
         }
@@ -760,20 +732,40 @@ impl<T> PureBranch<T> {
             // Only one token here
             if trimmed_trail.is_empty() {
                 return if let Some(mc) = self.method_callbacks.get(method) {
-                    Some(mc.clone())
-                } else if let Some(dmc) = &self.default_method_callback {
-                    Some(dmc.clone())
-                } else if let Some(dc) = &self.default_callback {
-                    Some(dc.clone())
-                } else {
-                    None
-                }.map(|callback| {
-                    CallbackInformation {
-                        callback,
+                    Some(CallbackInformation::ResponseHandler {
+                        callback: mc.clone(),
                         layers: self.layers.clone(),
                         variable_indicators: vec![]
+                    })
+                } else if let Some(dmc) = &self.default_method_callback {
+                    Some(CallbackInformation::ResponseHandler {
+                        callback: dmc.clone(),
+                        layers: self.layers.clone(),
+                        variable_indicators: vec![]
+                    })
+                } else if let Some(dc) = &self.default_callback {
+                    Some(CallbackInformation::ResponseHandler {
+                        callback: dc.clone(),
+                        layers: self.layers.clone(),
+                        variable_indicators: vec![]
+                    })
+                } else {
+                    #[cfg(feature = "stream")]
+                    {
+                        if let Some(sh) = &self.stream_handler {
+                            Some(CallbackInformation::StreamHandler {
+                                callback: sh.clone(),
+                                variable_indicators: vec![]
+                            })
+                        } else {
+                            None
+                        }
                     }
-                });
+                    #[cfg(not(feature = "stream"))]
+                    {
+                        None
+                    }
+                };
             } else {
                 (trimmed_trail.to_string(), "".to_string())
             }
@@ -806,15 +798,23 @@ impl<T> PureBranch<T> {
 
         match result.iter_mut().next() {
             Some(c_info) => {
-                // We append the possible layers from this level
-                c_info.layers.extend(self.layers.clone());
-                c_info.variable_indicators.push(is_var);
+                match c_info {
+                    CallbackInformation::ResponseHandler{layers, variable_indicators,..} => {
+                        // We append the possible layers from this level
+                        layers.extend(self.layers.clone());
+                        variable_indicators.push(is_var);
+                    },
+                    #[cfg(feature = "stream")]
+                    CallbackInformation::StreamHandler{variable_indicators, ..} => {
+                        variable_indicators.push(is_var);
+                    }
+                }
             },
             None => {
                 // Now, there was not match at all. First, we verify if the path is a file
                 if std::path::Path::new(trimmed_trail).extension().is_some() {
                     if let Some(fc) = &self.files_callback {
-                        result = Some(CallbackInformation {
+                        result = Some(CallbackInformation::ResponseHandler {
                             callback: Arc::clone(fc),
                             layers: self.layers.clone(),
                             variable_indicators: vec![]
@@ -825,7 +825,7 @@ impl<T> PureBranch<T> {
                 // Last, if there is a default callback, we call it.
                 if result.is_none() {
                     if let Some(dc) = &self.default_callback {
-                        result = Some(CallbackInformation {
+                        result = Some(CallbackInformation::ResponseHandler {
                             callback: Arc::clone(dc),
                             layers: self.layers.clone(),
                             variable_indicators: vec![]

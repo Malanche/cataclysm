@@ -39,12 +39,17 @@ pub use self::cors::{CorsBuilder, Cors};
 mod cors;
 
 pub use self::metafunctions::{Callback, CoreFn, LayerFn, Pipeline, Extractor};
-#[cfg(feature = "ws")]
-pub(crate) use self::metafunctions::{WebSocketFn};
+#[cfg(feature = "stream")]
+pub use self::metafunctions::{StreamCallback};
+#[cfg(feature = "stream")]
+pub(crate) use self::metafunctions::{HandlerFn};
 mod metafunctions;
 
 /// Contains usefull stuff for session management
 pub mod session;
+
+pub use self::stream::Stream;
+mod stream;
 
 /// Contains some basic websockets functionality
 #[cfg(feature = "ws")]

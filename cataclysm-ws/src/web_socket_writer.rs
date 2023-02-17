@@ -15,7 +15,7 @@ impl WebSocketWriter {
     pub const OP_CODE_PING: u8 = 0x09;
     pub const OP_CODE_PONG: u8 = 0x0A;
 
-    pub fn new(write_stream: OwnedWriteHalf) -> Self {
+    pub fn new_unchecked(write_stream: OwnedWriteHalf) -> Self {
         WebSocketWriter {
             write_stream
         }

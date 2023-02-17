@@ -1,7 +1,7 @@
 pub use self::callback::{Callback, CoreFn, LayerFn, Pipeline};
-#[cfg(feature = "ws")]
-pub use self::callback::{WebSocketFn};
-mod callback;
+#[cfg(feature = "stream")]
+pub use self::callback::{StreamCallback, HandlerFn};
+pub(crate) mod callback;
 
 pub use self::extractor::Extractor;
 mod extractor;

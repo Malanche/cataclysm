@@ -2,12 +2,19 @@ use crate::{
     additional::Additional,
     http::{Response, Request}
 };
-#[cfg(feature = "ws")]
-use crate::ws::{WebSocketThread, WebSocketWriter};
+#[cfg(feature = "stream")]
+use crate::Stream;
 use futures::future::FutureExt;
 use std::pin::Pin;
 use std::future::Future;
 use std::sync::Arc;
+
+/// Wrapper pipeline for the server to work with
+pub(crate) enum PipelineKind<T> {
+    NormalPipeline(Pipeline<T>),
+    #[cfg(feature = "stream")]
+    StreamPipeline(Arc<HandlerFn<T>>)
+}
 
 /// Pipeline type, contains either a layer or the core of the pipeline
 pub enum Pipeline<T> {
@@ -30,9 +37,6 @@ impl<T> Pipeline<T> {
 pub type CoreFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 /// Type representing middleware functions
 pub type LayerFn<T> = Box<dyn Fn(Request, Box<Pipeline<T>>, Arc<Additional<T>>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
-/// Type representing a websocket handler function
-#[cfg(feature = "ws")]
-pub type WebSocketFn = Box<dyn Fn(WebSocketThread, WebSocketWriter) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Callback trait, for http callbacks
 pub trait Callback<A> {
@@ -50,14 +54,14 @@ impl<F, R> Callback<()> for F where F: Fn() -> R, R: Future<Output = Response> +
 /// This macro implements the trait for a given indexed tuple
 macro_rules! callback_for_many {
     ($struct_name:ident $index:tt) => {
-        impl<F, R, $struct_name> Callback<($struct_name,)> for F where F: Fn($struct_name) -> R, R: Future<Output = Response> + Send + 'static {
+        impl<K, R, $struct_name> Callback<($struct_name,)> for K where K: Fn($struct_name) -> R, R: Future<Output = Response> + Send + 'static {
             fn invoke(&self, args: ($struct_name,)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self(args.$index).boxed()
             }
         }
     };
     ($($struct_name:ident $index:tt),+) => {
-        impl<F, R, $($struct_name),+> Callback<($($struct_name),+)> for F where F: Fn($($struct_name),+) -> R, R: Future<Output = Response> + Send + 'static {
+        impl<K, R, $($struct_name),+> Callback<($($struct_name),+)> for K where K: Fn($($struct_name),+) -> R, R: Future<Output = Response> + Send + 'static {
             fn invoke(&self, args: ($($struct_name),+)) -> Pin<Box<dyn Future<Output = Response>  + Send>> {
                 self($(args.$index,)+).boxed()
             }
@@ -65,9 +69,89 @@ macro_rules! callback_for_many {
     }
 }
 
-// We implement the trait for up to 5 arguments at the moment
+// We implement the trait for up to 7 arguments at the moment
 callback_for_many!(A 0);
 callback_for_many!(A 0, B 1);
 callback_for_many!(A 0, B 1, C 2);
 callback_for_many!(A 0, B 1, C 2, D 3);
 callback_for_many!(A 0, B 1, C 2, D 3, E 4);
+callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5);
+callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+
+
+/// Type for the core handler, that is, as a [CoreFn](CoreFn) but can also take a stream (after valid http request processing)
+#[cfg(feature = "stream")]
+pub type HandlerFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>, Stream) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+#[cfg(feature = "stream")]
+pub trait StreamCallback<A> {
+    fn invoke(&self, stream: Stream, args: A) -> Pin<Box<dyn Future<Output = ()>  + Send>>;
+}
+
+#[cfg(feature = "stream")]
+impl<K, R> StreamCallback<()> for K where K: Fn(Stream) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, _args: ()) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream).boxed()
+    }
+}
+
+/// This macro implements the trait for a given indexed tuple
+macro_rules! stream_callback_for_many {
+    ($struct_name:ident $index:tt) => {
+        impl<K, R, $struct_name> StreamCallback<($struct_name, )> for K where K: Fn(Stream, $struct_name) -> R, R: Future<Output = ()> + Send + 'static {
+            fn invoke(&self, stream: Stream, args: ($struct_name,)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+                self(stream, args.$index).boxed()
+            }
+        }
+    };
+    ($($struct_name:ident $index:tt),+) => {
+        impl<K, R, $($struct_name),+> StreamCallback<($($struct_name),+)> for K where K: Fn(Stream, $($struct_name),+) -> R, R: Future<Output = ()> + Send + 'static {
+            fn invoke(&self, stream: Stream, args: ($($struct_name),+)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+                self(stream, $(args.$index,)+).boxed()
+            }
+        }
+    }
+}
+
+stream_callback_for_many!(A 0);
+stream_callback_for_many!(A 0, B 1);
+stream_callback_for_many!(A 0, B 1, C 2);
+stream_callback_for_many!(A 0, B 1, C 2, D 3);
+stream_callback_for_many!(A 0, B 1, C 2, D 3, E 4);
+
+/*
+#[cfg(feature = "stream")]
+impl<K, R, A> StreamCallback<(A, )> for K where K: Fn(Stream, A) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, args: (A, )) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream, args.0).boxed()
+    }
+}
+
+#[cfg(feature = "stream")]
+impl<K, R, A, B> StreamCallback<(A, B)> for K where K: Fn(Stream, A, B) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, args: (A, B)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream, args.0, args.1).boxed()
+    }
+}
+
+#[cfg(feature = "stream")]
+impl<K, R, A, B, C> StreamCallback<(A, B, C)> for K where K: Fn(Stream, A, B, C) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, args: (A, B, C)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream, args.0, args.1, args.2).boxed()
+    }
+}
+
+#[cfg(feature = "stream")]
+impl<K, R, A, B, C, D> StreamCallback<(A, B, C, D)> for K where K: Fn(Stream, A, B, C, D) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, args: (A, B, C, D)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream, args.0, args.1, args.2, args.3).boxed()
+    }
+}
+
+#[cfg(feature = "stream")]
+impl<K, R, A, B, C, D> StreamCallback<(A, B, C, D)> for K where K: Fn(Stream, A, B, C, D) -> R, R: Future<Output = ()> + Send + 'static {
+    fn invoke(&self, stream: Stream, args: (A, B, C, D)) -> Pin<Box<dyn Future<Output = ()>  + Send>> {
+        self(stream, args.0, args.1, args.2, args.3).boxed()
+    }
+}
+*/

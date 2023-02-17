@@ -17,11 +17,9 @@ pub struct File {
 /// ```rust, no_run
 /// # use cataclysm::http::{Response, Multipart};
 /// async fn receive_file(multipart: Multipart) -> Response {
-///     for file in multipart.files() {
-///         if let Some(filename) = &file.filename {
-///             log::info!("Found file {}, writing content", filename);
-///             // Do something with the file...
-///         }
+///     for (filename, file) in multipart.iter() {
+///         log::info!("Found file {}, writing content", filename);
+///         // Do something with the file...
 ///     }
 ///     Response::ok()
 /// }

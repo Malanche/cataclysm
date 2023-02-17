@@ -4,12 +4,12 @@ use tokio::{
     //io::AsyncWriteExt
 };
 use bytes::Buf;
+use crate::metafunctions::callback::PipelineKind;
 use crate::{
+    Stream,
     Branch, Shared, Additional, Cors, branch::PureBranch, Pipeline, Error, session::SessionCreator,
     http::{Request, Response, Method}
 };
-#[cfg(feature = "ws")]
-use crate::ws::{WebSocketThread, WebSocketWriter};
 use std::sync::{Arc};
 
 // Default max connections for the server
@@ -393,12 +393,15 @@ impl<T: 'static + Sync + Send> Server<T> {
             Some(b) => b,
             None => return Ok(())
         };
+
+        let stream = Stream::new(socket);
+
         let mut request =match Request::parse(request_bytes.clone(), addr) {
             Ok(r) => r,
             Err(_e) => {
                 #[cfg(feature = "full_log")]
                 log::debug!("{}", _e);
-                Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
+                stream.reply(Response::bad_request()).await?;
                 return Ok(())
             }
         };
@@ -406,50 +409,33 @@ impl<T: 'static + Sync + Send> Server<T> {
         if let Some(cors) = &*self.cors {
             if request.method == Method::Options {
                 if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
-                    Server::<T>::dispatch_write(&socket, cors.preflight(&request, &supported_methods)).await?;
+                    stream.reply(cors.preflight(&request, &supported_methods)).await?;
                 } // If the method is not options, it will anyways return a not-found
             }
         }
 
-        // The request could be an upgrade request for a websockets connection
-        #[cfg(feature = "ws")]
-        if request.headers.get("Upgrade").map(|u| u.get(0).map(|v| v == "websocket")).flatten().unwrap_or(false) && request.headers.get("Connection").map(|c| c.get(0).map(|v| v == "Upgrade" || v == "keep-alive, Upgrade")).flatten().unwrap_or(false) {
-            if let Some(nonce) = request.headers.get("Sec-WebSocket-Key").map(|wsk| wsk.get(0)).flatten() {
-                // According to RFC4122
-                let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
-                let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
-
-                // We request a websocket handler
-                match self.pure_branch.websocket_handler(request.url().path()) {
-                    Some(handler) => {
-                        let response = Response::switching_protocols().header("Upgrade", "websocket").header("Connection", "Upgrade").header("Sec-WebSocket-Accept", websocket_accept);
-                        Server::<T>::dispatch_write(&socket, response).await?;
-                        let (owned_read, owned_write) = socket.into_split();
-                        let wst = WebSocketThread::new(owned_read);
-                        let wsw = WebSocketWriter::new(owned_write);
-                        handler(wst, wsw).await;
-                    },
-                    None => {
-                        Server::<T>::dispatch_write(&socket, Response::not_found()).await?;
-                    }
-                }
-            } else {
-                Server::<T>::dispatch_write(&socket, Response::bad_request()).await?;
-            }
-            return Ok(())
-        }
-
         request.addr = addr;
-        
+
         // The method will take the request, and modify particularly the "variable count" variable
         let mut response = match self.pure_branch.pipeline(&mut request) {
-            Some(pipeline) => {
-                #[cfg(feature = "full_log")]
-                log::trace!("found path {} with method {}", request.url, request.method);
-                match pipeline {
-                    Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
-                    Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
-                }.await
+            Some(pipeline_kind) => {
+                match pipeline_kind {
+                    PipelineKind::NormalPipeline(pipeline) => {
+                        #[cfg(feature = "full_log")]
+                        log::trace!("found path {} with method {}", request.url, request.method);
+                        match pipeline {
+                            Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
+                            Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
+                        }.await
+                    },
+                    #[cfg(feature = "stream")]
+                    PipelineKind::StreamPipeline(pipeline) => {
+                        #[cfg(feature = "full_log")]
+                        log::trace!("found stream path {}", request.url);
+                        pipeline(request.clone(), self.additional.clone(), stream).await;
+                        return Ok(())
+                    }
+                }
             },
             None => {
                 #[cfg(feature = "full_log")]
@@ -467,8 +453,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.url().path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
 
-        Server::<T>::dispatch_write(&socket, response).await?;
-            //socket.shutdown();
+        stream.reply(response).await?;
         Ok(())
     }
 }
