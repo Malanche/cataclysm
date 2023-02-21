@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use crate::Error;
 
 /// Contains the data of an http response
 pub struct Response {
     protocol: String,
     pub(crate) status: (u32, String),
-    pub(crate) headers: HashMap<String, String>,
+    pub(crate) headers: HashMap<String, Vec<String>>,
     pub content: Vec<u8>
 }
 
@@ -13,24 +14,11 @@ impl<A: Into<String>> From<(u32, A)> for Response {
         Response {
             protocol: "HTTP/1.1".into(),
             status: (source.0, source.1.into()),
-            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
+            headers: vec![("Content-Type".to_string(), vec!["text/html".to_string()])].into_iter().collect(),
             content: Vec::new()
         }
     }
 }
-
-/*
-impl<A: Into<String>> Into<Response> for (u32, A) {
-    fn into(self) -> Response {
-        Response {
-            protocol: "HTTP/1.1".into(),
-            status: (self.0, self.1.into()),
-            headers: vec![("Content-Type", "text/html")].into_iter().map(|(a,b)| (a.into(), b.into())).collect(),
-            content: Vec::new()
-        }
-    }
-}
-*/
 
 impl Response {
     // Informational
@@ -108,7 +96,7 @@ impl Response {
 
     /// Inserts a header into the response
     pub fn header<A: Into<String>, B: Into<String>>(mut self, key: A, value: B) -> Response {
-        self.headers.insert(key.into(), value.into());
+        self.headers.entry(key.into()).or_insert_with(|| Vec::new()).push(value.into());
         self
     }
 
@@ -118,20 +106,81 @@ impl Response {
         self
     }
 
+    /// Returns the status code contained in the response
+    pub fn status_code(&self) -> u32 {
+        self.status.0
+    }
+
     /// Serializes the response to be sent to the client
     pub(crate) fn serialize(&mut self) -> Vec<u8> {
         let mut response = format!("{} {} {}\r\n", self.protocol, self.status.0, self.status.1);
 
-        self.headers.insert("Content-Length".into(), format!("{}", self.content.len()));
-        response += &self.headers.iter().map(|(key, value)| format!("{}: {}", key, value)).collect::<Vec<_>>().join("\r\n");
+        self.headers.entry("Content-Length".to_string()).or_insert_with(|| Vec::new()).push(format!("{}", self.content.len()));
+        for (header_name, headers) in &self.headers {
+            for header in headers {
+                response += &format!("{}: {}\r\n", header_name, header);
+            }
+        }
         // print response for debug purposes
         #[cfg(feature = "full_log")]
-        log::trace!("serializing http response with headers: {}", response);
+        log::trace!("serializing http repsonse with headers: {}", response);
         // We finalize the headers
-        response += "\r\n\r\n";
+        response += "\r\n";
         // And now add the body, if any
         let mut response = response.into_bytes();
         response.extend_from_slice(&self.content);
         response
+    }
+
+    pub(crate) fn parse<A: Into<Vec<u8>>>(bytes: A) -> Result<Response, Error> {
+        let mut source: Vec<u8> = bytes.into();
+
+        // http call should have at least 3 bytes. For sure
+        let (one, two) = (source.iter(), source.iter().skip(2));
+
+        let mut split_index = None;
+        for (idx, (a, b)) in one.zip(two).enumerate() {
+            if a==b && b==&b'\n' && idx > 0 && source[idx-1] == b'\r' && source[idx+1] == b'\r' {
+                split_index = Some(idx);
+                break;
+            }
+        }
+
+        let split_index = split_index.ok_or(Error::Parse(format!("no end of header was found")))?;
+
+        // The minus one is a safe operation, due to the upper for loop
+        let mut content: Vec<_> = source.drain((split_index - 1)..).collect();
+        // We have to remove the `\r\n\r\n` that is at the beginning of the remaining bytes
+        content.drain(..4);
+        // The request header needs to be a string
+        let response_string = String::from_utf8(source).map_err(|e| Error::Parse(format!("{}", e)))?;
+
+        let mut lines = response_string.split("\r\n");
+        let first_line = lines.next().ok_or(Error::Parse("response has no first line".into()))?;
+        let tokens = first_line.split(" ").collect::<Vec<_>>();
+        let (protocol, code, status_text) = if tokens.len() < 3 {
+            return Err(Error::Parse("responses's first has incorrect format".into()));
+        } else {
+            (
+                tokens[0].to_string(),
+                tokens[1].parse::<u32>().map_err(|e| Error::custom(format!("{}", e)))?,
+                tokens[2..].join(" ")
+            )
+        };
+        // We parse the remaining headers
+        let mut headers = HashMap::new();
+        for line in lines {
+            let idx = line.find(":").ok_or(Error::Parse(format!("corrupted header missing colon")))?;
+            let (key, value) = line.split_at(idx);
+            let (key, value) = (key.to_string(), value.trim_start_matches(": ").trim_end().to_string());
+            headers.entry(key).or_insert_with(|| Vec::new()).push(value);
+        }
+
+        Ok(Response {
+            protocol,
+            status: (code, status_text),
+            headers,
+            content
+        })
     }
 }

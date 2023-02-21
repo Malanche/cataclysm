@@ -513,7 +513,7 @@ impl<T: Sync + Send> Branch<T> {
                     #[cfg(feature = "full_log")]
                     log::error!("extractor error: {}", _e);
                     // We use the stream to send the request
-                    (async move {match stream.reply(Response::bad_request()).await {
+                    (async move {match stream.response(Response::bad_request()).await {
                         Ok(_) => (),
                         Err(_e) => {
                             #[cfg(feature = "full_log")]

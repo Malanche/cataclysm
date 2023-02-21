@@ -401,7 +401,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             Err(_e) => {
                 #[cfg(feature = "full_log")]
                 log::debug!("{}", _e);
-                stream.reply(Response::bad_request()).await?;
+                stream.response(Response::bad_request()).await?;
                 return Ok(())
             }
         };
@@ -409,7 +409,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         if let Some(cors) = &*self.cors {
             if request.method == Method::Options {
                 if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
-                    stream.reply(cors.preflight(&request, &supported_methods)).await?;
+                    stream.response(cors.preflight(&request, &supported_methods)).await?;
                 } // If the method is not options, it will anyways return a not-found
             }
         }
@@ -453,7 +453,8 @@ impl<T: 'static + Sync + Send> Server<T> {
             log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.url().path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
         }
 
-        stream.reply(response).await?;
+        stream.response(response).await?;
+        //Server::<T>::dispatch_write(&stream.into(), response).await?;
         Ok(())
     }
 }

@@ -45,21 +45,21 @@ impl WebSocketHandshake {
                         if found {
                             response = response.header("Sec-WebSocket-Protocol", protocol);
                         } else {
-                            stream.reply(Response::bad_request()).await?;
+                            stream.response(Response::bad_request()).await?;
                             return Err(Error::custom("unsupported protocol for websockets exchange"));
                         }
                     } else {
-                        stream.reply(Response::bad_request()).await?;
+                        stream.response(Response::bad_request()).await?;
                         return Err(Error::custom("missing Sec-WebSocket-Protocol header"));
                     }
                 }
 
                 response = response.header("Sec-WebSocket-Accept", websocket_accept);
 
-                stream.reply(response).await?;
+                stream.response(response).await?;
                 Ok(WebSocketStream::from_tcp_stream_unchecked(stream.into()))
             } else {
-                stream.reply(Response::bad_request()).await?;
+                stream.response(Response::bad_request()).await?;
                 Err(Error::custom("nonce does not exist in websocket handshake"))
             }
         } else {

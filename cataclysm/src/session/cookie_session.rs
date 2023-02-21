@@ -303,7 +303,7 @@ impl SessionCreator for CookieSession {
 
         let cookie = cookie_builder.finish();
 
-        res.headers.insert("Set-Cookie".to_string(), format!("{}", cookie.encoded()));
+        res = res.header("Set-Cookie", format!("{}", cookie.encoded()));
         res
     }
 }

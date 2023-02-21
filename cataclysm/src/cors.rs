@@ -152,16 +152,10 @@ impl Cors {
         };
 
         if let Some(acao) = acao {
-            response.headers.insert(
-                "Access-Control-Allow-Origin".to_string(),
-                acao
-            );
+            response.headers.entry("Access-Control-Allow-Origin".to_string()).or_insert_with(|| Vec::new()).push(acao);
 
             if let Some(max_age) = self.max_age {
-                response.headers.insert(
-                    "Access-Control-Max-Age".to_string(),
-                    format!("{}", max_age)
-                );
+                response.headers.entry("Access-Control-Max-Age".to_string()).or_insert_with(|| Vec::new()).push(format!("{}", max_age));
             }
         }
     }
@@ -235,23 +229,23 @@ impl Cors {
             #[cfg(feature = "full_log")]
             log::debug!("the preflight request for '{}' is successful, with methods [{}] and headers [{}]", acao, methods, headers);
 
-            response.headers.insert(
+            response = response.header(
                 "Access-Control-Allow-Origin".to_string(),
                 acao
             );
 
-            response.headers.insert(
+            response = response.header(
                 "Access-Control-Allow-Methods".to_string(),
                 methods
             );
 
-            response.headers.insert(
+            response = response.header(
                 "Access-Control-Allow-Headers".to_string(),
                 headers
             );
 
             if let Some(max_age) = self.max_age {
-                response.headers.insert(
+                response = response.header(
                     "Access-Control-Max-Age".to_string(),
                     format!("{}", max_age)
                 );
