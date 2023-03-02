@@ -145,7 +145,11 @@ impl BasicRequest {
     pub fn serialize(&self) -> Vec<u8> {
         let mut content = String::new();
         // First line
-        content += &format!("{} {} HTTP/1.1\r\n", self.method, self.url.path());
+        let mut path_with_query = self.url.path().to_string();
+        if let Some(query) = self.url.query() {
+            path_with_query += &format!("?{}", query);
+        }
+        content += &format!("{} {} HTTP/1.1\r\n", self.method, path_with_query);
         for (header_name, header_contents) in &self.headers {
             for header_content in header_contents {
                 content += &format!("{}: {}\r\n", header_name, header_content);
