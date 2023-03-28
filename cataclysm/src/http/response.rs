@@ -14,7 +14,7 @@ impl<A: Into<String>> From<(u32, A)> for Response {
         Response {
             protocol: "HTTP/1.1".into(),
             status: (source.0, source.1.into()),
-            headers: vec![("Content-Type".to_string(), vec!["text/html".to_string()])].into_iter().collect(),
+            headers: HashMap::new(),
             content: Vec::new()
         }
     }
