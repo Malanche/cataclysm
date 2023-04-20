@@ -121,7 +121,7 @@ impl Frame {
 
     /// Creates a close frame
     pub fn close() -> Frame {
-        let masking_key = Some(rand::random::<u32>());
+        let masking_key = None; //Some(rand::random::<u32>());
         Frame {
             inner_op_code: Frame::OP_CODE_CLOSE,
             masking_key,
