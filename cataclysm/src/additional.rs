@@ -9,3 +9,10 @@ pub struct Additional<T> {
     pub(crate) shared: Option<Shared<T>>,
     pub(crate) session_creator: Option<Arc<Box<dyn SessionCreator>>>,
 }
+
+impl<T> Additional<T> {
+    /// Gives back a copy of the contained `Shared` object, in case there is some
+    pub fn shared(&self) -> Option<Shared<T>> {
+        self.shared.clone()
+    }
+}
