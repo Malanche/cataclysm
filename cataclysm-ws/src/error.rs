@@ -4,7 +4,10 @@ pub enum FrameParseError {
     /// Indicates that the first 4 bits of the message are unsupported
     WrongFinRSV,
     /// Indicates that the message content is incomplete
-    Incomplete,
+    Incomplete {
+        expected: usize,
+        obtained: usize
+    },
     /// Indicates that the message is malformed
     Malformed,
     /// Indicates that the message contains 0 bytes
@@ -19,7 +22,7 @@ impl std::fmt::Display for FrameParseError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         let content = match self {
             FrameParseError::WrongFinRSV => format!("first 4 bits of the message are malformed"),
-            FrameParseError::Incomplete => format!("mismatching payload length in message"),
+            FrameParseError::Incomplete{expected, obtained} => format!("mismatching payload length in message (expected: {}, obtained: {})", expected, obtained),
             FrameParseError::Malformed => format!("the message does not have the corret structure or enough bytes"),
             FrameParseError::NullContent => format!("can't parse because the message has length 0"),
             FrameParseError::InvalidUtf8(e) => format!("invalid utf8 bytes, {}", e),

@@ -72,7 +72,7 @@ impl Frame {
         };
         // Now we read the operation code
         let inner_op_code = (candidate[0] << 4) >> 4;
-        let mut payload = candidate.get(offset..offset+length).ok_or_else(|| FrameParseError::Incomplete)?.to_vec();
+        let mut payload = candidate.get(offset..offset+length).ok_or_else(|| FrameParseError::Incomplete{expected: length + offset, obtained: candidate.len()})?.to_vec();
         if let Some(masking_key) = &masking_key {
             // We decode the content in case we have a masking key
             payload = payload.into_iter().enumerate().map(|(idx, v)| {

@@ -1,5 +1,8 @@
 use tokio::net::{TcpStream, tcp::OwnedWriteHalf};
 use crate::{Error, Frame};
+use bytes::Buf;
+
+const CHUNK_SIZE: usize = 4_096;
 
 /// Sending part of web sockets connection
 pub struct WebSocketWriter {
@@ -23,6 +26,14 @@ impl WebSocketWriter {
 
     async fn write<A: Into<Vec<u8>>>(&self, content: A) -> Result<(), Error> {
         let content: Vec<u8> = content.into();
+        let mut chunks_iter = content.chunks(CHUNK_SIZE);
+        #[cfg(feature = "full_log")]
+        log::trace!("writting {} chunks of maximum {} bytes each", chunks_iter.len(), CHUNK_SIZE);
+        // We check the first chunk
+        let mut current_chunk = match chunks_iter.next() {
+            Some(v) => v,
+            None => return Ok(()) // Zero length response
+        };
         loop {
             // Wait for the socket to be writable
             let stream: &TcpStream = self.write_stream.as_ref();
@@ -30,9 +41,20 @@ impl WebSocketWriter {
     
             // Try to write data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.
-            match stream.try_write(&content) {
-                Ok(_n) => {
-                    break Ok(());
+            match stream.try_write(&current_chunk) {
+                Ok(n) => {
+                    if n != current_chunk.remaining() {
+                        // There are some bytes still to be written in this chunk
+                        #[cfg(feature = "full_log")]
+                        log::debug!("incomplete chunk, trying to serve remaining bytes ({}/{})", current_chunk.len(), CHUNK_SIZE);
+                        current_chunk.advance(n);
+                        continue;
+                    } else {
+                        current_chunk = match chunks_iter.next() {
+                            Some(v) => v,
+                            None => break Ok(())
+                        }
+                    }
                 }
                 Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
                     continue;

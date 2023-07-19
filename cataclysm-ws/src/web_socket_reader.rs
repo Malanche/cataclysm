@@ -5,6 +5,7 @@ use tokio::{
 use crate::{
     Frame,
     Error,
+    FrameParseError,
     WebSocketThread,
     communication::read_frame
 };
@@ -73,7 +74,16 @@ impl WebSocketCustomChild {
                     },
                     Err(e) => {
                         log::debug!("{}", e);
-                        break wst.on_close(false).await
+                        match e {
+                            Error::FrameParse(FrameParseError::Incomplete{..}) => {
+                                // It is likely that a next chunk is missing
+                                continue
+                            },
+                            _ => {
+                                log::debug!("closing connection");
+                                break wst.on_close(false).await
+                            }
+                        }
                     }
                 }
             }
