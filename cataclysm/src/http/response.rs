@@ -9,6 +9,15 @@ pub struct Response {
     pub content: Vec<u8>
 }
 
+impl<A: Into<Response>, B: Into<Response>> Into<Response> for Result<A, B> {
+    fn into(self) -> Response {
+        match self {
+            Ok(v) => v.into(),
+            Err(e) => e.into()
+        }
+    }
+}
+
 impl<A: Into<String>> From<(u32, A)> for Response {
     fn from(source: (u32, A)) -> Response {
         Response {
