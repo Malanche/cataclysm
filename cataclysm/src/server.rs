@@ -238,7 +238,7 @@ impl<T: 'static + Sync + Send> Server<T> {
 
         log::info!("Cataclysm ongoing \u{26c8}");
         #[cfg(feature = "full_log")]
-        log::info!("using the `full_log` feature might impact performance");
+        log::warn!("using the `full_log` feature might impact performance");
         // We need a fused future for the select macro
         tokio::select! {
             _ = async {
@@ -313,7 +313,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                                 }
 
                                 // We check now if there is a content size hint
-                                expected_length = r.headers.get("Content-Length").map(|cl| cl.get(0).map(|v| v.parse::<usize>().ok())).flatten().flatten();
+                                expected_length = r.headers.get("Content-Length").or_else(|| r.headers.get("content-length")).map(|cl| cl.get(0).map(|v| v.parse::<usize>().ok())).flatten().flatten();
                                 #[cfg(feature = "full_log")]
                                 log::trace!("expecting to read {:?} bytes in request", expected_length);
                                 header_size = r.header_size;
