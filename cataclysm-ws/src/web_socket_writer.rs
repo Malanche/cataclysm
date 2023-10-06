@@ -74,6 +74,16 @@ impl WebSocketWriter {
         self.write(Frame::binary(bytes)).await
     }
 
+    /// Sends a ping message through the websockets connection
+    pub async fn ping<A: Into<Vec<u8>>>(&self, payload: A) -> Result<(), Error> {
+        self.write(Frame::ping(payload)).await
+    }
+
+    /// Sends a pong message through the websockets connection
+    pub async fn pong<A: Into<Vec<u8>>>(&self, payload: A) -> Result<(), Error> {
+        self.write(Frame::pong(payload)).await
+    }
+
     /// Closes the write part of the socket
     pub async fn close(&self) -> Result<(), Error> {
         self.write(Frame::close()).await
