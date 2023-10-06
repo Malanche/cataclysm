@@ -84,8 +84,8 @@ impl Frame {
         let message = match inner_op_code {
             Frame::OP_CODE_TEXT => Message::Text(String::from_utf8(payload).map_err(|e| FrameParseError::InvalidUtf8(e))?),
             Frame::OP_CODE_BINARY => Message::Binary(payload),
-            Frame::OP_CODE_PING => Message::Ping,
-            Frame::OP_CODE_PONG => Message::Pong,
+            Frame::OP_CODE_PING => Message::Ping(payload),
+            Frame::OP_CODE_PONG => Message::Pong(payload),
             Frame::OP_CODE_CLOSE => Message::Close,
             _ => return Err(FrameParseError::UnsupportedOpCode)
         };
@@ -103,6 +103,28 @@ impl Frame {
         let message = Message::Text(payload);
         Frame {
             inner_op_code: Frame::OP_CODE_TEXT,
+            masking_key: None,
+            message
+        }
+    }
+
+    /// Creates a ping message with the given application data
+    pub fn ping<A: Into<Vec<u8>>>(payload: A) -> Frame {
+        let payload = payload.into();
+        let message = Message::Ping(payload);
+        Frame {
+            inner_op_code: Frame::OP_CODE_PING,
+            masking_key: None,
+            message
+        }
+    }
+
+    /// Creates a pong message with the given application data
+    pub fn pong<A: Into<Vec<u8>>>(payload: A) -> Frame {
+        let payload = payload.into();
+        let message = Message::Pong(payload);
+        Frame {
+            inner_op_code: Frame::OP_CODE_PONG,
             masking_key: None,
             message
         }

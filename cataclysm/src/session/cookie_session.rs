@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use cookie::Cookie;
 use chrono::{DateTime, Utc};
+use base64::{Engine, engine::general_purpose};
 
 /// Enum to indicate a same site policy in the cookie builder
 #[derive(Clone)]
@@ -206,7 +207,7 @@ impl CookieSession {
                         // First, we try to decode the content
                         let values = serde_json::from_str(content).map_err(|e| Error::custom(format!("{}", e)))?;
         
-                        let tag = base64::decode(signature).map_err(|e| Error::custom(format!("{}", e)))?;
+                        let tag = general_purpose::STANDARD.decode(signature).map_err(|e| Error::custom(format!("{}", e)))?;
         
                         hmac::verify(&self.key, content.as_bytes(), &tag).map_err(|e| Error::custom(format!("{}", e)))?;
         
@@ -242,7 +243,7 @@ impl SessionCreator for CookieSession {
 
     fn apply(&self, values: &HashMap<String, String>, mut res: Response) -> Response {
         let content = serde_json::to_string(values).unwrap();
-        let signature = base64::encode(hmac::sign(&self.key, content.as_bytes()).as_ref());
+        let signature = general_purpose::STANDARD.encode(hmac::sign(&self.key, content.as_bytes()).as_ref());
 
         let cookie_builder = Cookie::build(&self.cookie_name, format!("{}{}", signature, content));
 

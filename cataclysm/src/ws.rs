@@ -4,6 +4,7 @@ use crate::{
     Error,
     http::{Request, Response}
 };
+use base64::{Engine, engine::general_purpose};
 
 pub struct WebSocketHandshake {
     protocol: Option<String>
@@ -26,7 +27,7 @@ impl WebSocketHandshake {
             if let Some(nonce) = request.headers.get("Sec-WebSocket-Key").map(|wsk| wsk.get(0)).flatten() {
                 // According to RFC4122
                 let nonce = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", nonce);
-                let websocket_accept = base64::encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
+                let websocket_accept = general_purpose::STANDARD.encode(ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, nonce.as_bytes()));
 
                 let mut response = Response::switching_protocols()
                     .header("Upgrade", "websocket")

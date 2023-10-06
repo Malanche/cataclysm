@@ -1,6 +1,6 @@
 [package]
 name = "cataclysm"
-version = "0.2.0-beta.15"
+version = "0.2.0-beta.16"
 license = "MIT"
 description = "A simple http framework"
 repository = "https://github.com/Malanche/cataclysm.git"
@@ -25,24 +25,24 @@ winapi = "0.3.9"
 cataclysm-ws = {version = "0.2.0-beta.4", path = "../cataclysm-ws"}
 
 [dependencies]
-tokio = {version = "1.20.0", features = ["full"]}
-ctrlc = "3.2.2"
-regex = "1.6.0"
-serde = {version = "1.0.139", features = ["derive"]}
-serde_json = "1.0.82"
-log = {version = "0.4.17", features = ["std"]}
-futures = "0.3.21"
-chrono = "0.4.19"
-ring = "0.16.20"
-base64 = "0.13.0"
+tokio = {version = "1.32.0", features = ["full"]}
+ctrlc = "3.4.1"
+regex = "1.9.6"
+serde = {version = "1.0.188", features = ["derive"]}
+serde_json = "1.0.107"
+log = {version = "0.4.20", features = ["std"]}
+futures = "0.3.28"
+chrono = "0.4.31"
+ring = "0.17.0"
+base64 = "0.21.4"
 cookie = {version = "0.16.0", features = ["percent-encode"]}
 lazy_static = "1.4.0"
-libflate = "1.2.0"
-url = "2.2.2"
-serde_qs = "0.10.1"
-async-trait = "0.1.56"
-bytes = "1.1.0"
-cataclysm-ws = {version = "0.2.0-beta.4", path = "../cataclysm-ws", optional = true}
+libflate = "2.0.0"
+url = "2.4.1"
+serde_qs = "0.12.0"
+async-trait = "0.1.73"
+bytes = "1.5.0"
+cataclysm-ws = {version = "0.2.0-beta.5", path = "../cataclysm-ws", optional = true}
 
 [[bench]]
 name = "per_second"

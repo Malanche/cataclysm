@@ -5,3 +5,5 @@ members = [
     # Internal
     #"examples"
 ]
+
+resolver = "2"
