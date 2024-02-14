@@ -64,6 +64,11 @@ impl Frame {
 
         // Now, the masking key, if any
         let masking_key = if 0x80 == (candidate[1] & 0x80) {
+            if candidate.len() < offset + 4  {
+                // Quite likely not a malformed message, just incomplete
+                return Err(FrameParseError::Incomplete{expected: length + offset + 4, obtained: candidate.len()})
+            }
+
             offset += 4;
             // Now, we have to add 0, 1, 2 and 3 respectively, without the 4 that we just added.
             Some([candidate[offset - 4], candidate[offset - 3], candidate[offset - 2], candidate[offset - 1]])
