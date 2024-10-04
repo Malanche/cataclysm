@@ -245,7 +245,7 @@ impl SessionCreator for CookieSession {
         let content = serde_json::to_string(values).unwrap();
         let signature = general_purpose::STANDARD.encode(hmac::sign(&self.key, content.as_bytes()).as_ref());
 
-        let cookie_builder = Cookie::build(&self.cookie_name, format!("{}{}", signature, content));
+        let cookie_builder = Cookie::build((&self.cookie_name, format!("{}{}", signature, content)));
 
         let cookie_builder = if let Some(path) = &self.path {
             cookie_builder.path(path)
@@ -302,7 +302,7 @@ impl SessionCreator for CookieSession {
             cookie_builder
         };
 
-        let cookie = cookie_builder.finish();
+        let cookie = cookie_builder.build();
 
         res = res.header("Set-Cookie", format!("{}", cookie.encoded()));
         res
