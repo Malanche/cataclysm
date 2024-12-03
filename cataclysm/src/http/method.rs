@@ -80,8 +80,15 @@ impl MultipleMethod {
                     Ok(args) => handler.invoke(args).boxed(),
                     Err(_e) => {
                         #[cfg(feature = "full_log")]
-                        log::error!("extractor error: {}", _e);
-                        (async {Response::bad_request()}).boxed()
+                        {
+                            log::error!("extractor error: {}", _e);
+                            let response = _e.as_response();
+                            (async {response}).boxed()
+                        }
+                        #[cfg(not(feature = "full_log"))]
+                        {
+                            (async {Response::bad_request()}).boxed()
+                        }
                     }
                 }
             })
@@ -113,8 +120,15 @@ impl Method {
                     Ok(args) => handler.invoke(args).boxed(),
                     Err(_e) => {
                         #[cfg(feature = "full_log")]
-                        log::error!("extractor error: {}", _e);
-                        (async {Response::bad_request()}).boxed()
+                        {
+                            log::error!("extractor error: {}", _e);
+                            let response = _e.as_response();
+                            (async {response}).boxed()
+                        }
+                        #[cfg(not(feature = "full_log"))]
+                        {
+                            (async {Response::bad_request()}).boxed()
+                        }
                     }
                 }
             })

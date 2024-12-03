@@ -21,6 +21,8 @@
 //! }
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+
 pub use self::error::Error;
 mod error;
 pub use self::branch::{Branch};

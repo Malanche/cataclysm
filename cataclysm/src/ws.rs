@@ -58,7 +58,12 @@ impl WebSocketHandshake {
                 response = response.header("Sec-WebSocket-Accept", websocket_accept);
 
                 stream.response(response).await?;
-                Ok(WebSocketStream::from_tcp_stream_unchecked(stream.into()))
+                let (stream, permit) = stream.into_tcp_stream();
+                let mut web_socket_stream = WebSocketStream::from_tcp_stream_unchecked(stream);
+                if let Some(permit) = permit {
+                    web_socket_stream.set_permit(permit)
+                }
+                Ok(web_socket_stream)
             } else {
                 stream.response(Response::bad_request()).await?;
                 Err(Error::custom("nonce does not exist in websocket handshake"))

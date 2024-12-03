@@ -1,3 +1,6 @@
+#[cfg(feature = "full_log")]
+use crate::http::Response;
+
 /// Errors returned by this library
 #[derive(Debug)]
 pub enum Error {
@@ -19,10 +22,40 @@ pub enum Error {
     Custom(String)
 }
 
+#[cfg(feature = "full_log")]
+#[derive(serde::Serialize)]
+struct ErrorResponse {
+    detail: String
+}
+
 impl Error {
     /// Creates a custom error with a custom message
     pub fn custom<A: Into<String>>(message: A) -> Error {
         Error::Custom(message.into())
+    }
+
+    #[cfg(feature = "full_log")]
+    pub fn as_response(&self) -> Response {
+        let (mut base_response, content) = match self {
+            Error::Io(e) => (Response::internal_server_error(), ErrorResponse{detail: format!("{}", e)}),
+            Error::Parse(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
+            Error::Url(e) => (Response::bad_request(), ErrorResponse{detail: format!("{}", e)}),
+            Error::ExtractionBR(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
+            Error::ExtractionSE(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()}),
+            Error::Ring(ring::error::Unspecified) => (Response::internal_server_error(), ErrorResponse{detail: "no detail".to_string()}),
+            Error::NoSessionCreator => (Response::internal_server_error(), ErrorResponse{detail: "missconfiguration".to_string()}),
+            Error::Custom(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()})
+        };
+
+        let content = match serde_json::to_string(&content) {
+            Ok(v) => v,
+            Err(_) => {
+                base_response = Response::internal_server_error();
+                format!("{{\"detail\": \"serialization\"}}")
+            }
+        };
+
+        base_response.header("Content-Type", "application/json").body(content)
     }
 }
 

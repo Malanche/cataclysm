@@ -130,9 +130,6 @@ impl Response {
                 response += &format!("{}: {}\r\n", header_name, header);
             }
         }
-        // print response for debug purposes
-        #[cfg(feature = "full_log")]
-        log::trace!("serializing http repsonse with headers: {}", response);
         // We finalize the headers
         response += "\r\n";
         // And now add the body, if any

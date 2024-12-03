@@ -1,6 +1,7 @@
 use tokio::{
     net::{TcpStream, tcp::OwnedReadHalf},
-    task::JoinHandle
+    task::JoinHandle,
+    sync::{OwnedSemaphorePermit}
 };
 use crate::{
     Frame,
@@ -12,15 +13,22 @@ use crate::{
 
 /// Runner thread for a websockets connection
 pub struct WebSocketReader {
-    read_stream: OwnedReadHalf
+    read_stream: OwnedReadHalf,
+    permit: Option<OwnedSemaphorePermit>
 }
 
 impl WebSocketReader {
     /// Generates a new instance of the websocket reader, assuming the handshake has already been performed
     pub fn new_unchecked(read_stream: OwnedReadHalf) -> WebSocketReader {
         WebSocketReader {
-            read_stream
+            read_stream,
+            permit: None
         }
+    }
+
+    /// Auxiliar function that cataclysm uses to keep track of connections
+    pub fn set_permit(&mut self, permit: OwnedSemaphorePermit) {
+        self.permit = Some(permit);
     }
 
     /// Blocks until a message is received

@@ -1,17 +1,22 @@
-use tokio::net::TcpStream;
+use tokio::{
+    sync::OwnedSemaphorePermit,
+    net::TcpStream
+};
 use bytes::Buf;
 use crate::{Error, http::{Response, BasicRequest}};
 
 const CHUNK_SIZE: usize = 4_096;
 
+/// Wrapper around a TCP Stream
 pub struct Stream {
-    inner: TcpStream
+    inner: TcpStream,
+    permit: Option<OwnedSemaphorePermit>
 }
 
 impl Stream {
     /// Generates a new stream
-    pub fn new(stream: TcpStream) -> Stream {
-        Stream{inner: stream}
+    pub fn new(stream: TcpStream, permit: Option<OwnedSemaphorePermit>) -> Stream {
+        Stream{inner: stream, permit}
     }
 
     pub async fn try_read_response(&self) -> Result<Response, Error> {
@@ -95,6 +100,13 @@ impl Stream {
     pub async fn request(&self, basic_request: BasicRequest) -> Result<(), Error> {
         self.write_bytes(basic_request.serialize()).await
     }
+
+    /// Used to retrieve the internal tcp_stream.
+    ///
+    /// The semaphore permit that might come with it is the helper structure from cataclysm to keep track of the amount of connections that the server has. Use with care.
+    pub fn into_tcp_stream(self) -> (TcpStream, Option<OwnedSemaphorePermit>) {
+        (self.inner, self.permit)
+    }
 }
 
 // Reference access to the inner structure
@@ -108,12 +120,5 @@ impl AsRef<TcpStream> for Stream {
 impl AsMut<TcpStream> for Stream {
     fn as_mut(&mut self) -> &mut TcpStream {
         &mut self.inner
-    }
-}
-
-// Conversion to inner type
-impl Into<TcpStream> for Stream {
-    fn into(self) -> TcpStream {
-        self.inner
     }
 }

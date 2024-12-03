@@ -9,11 +9,73 @@ use std::pin::Pin;
 use std::future::Future;
 use std::sync::Arc;
 
+pub(crate) struct PipelineInfo<T> {
+    /// Contains information about how the handler function was found
+    #[cfg(feature = "full_log")]
+    pub pipeline_track: PipelineTrack,
+    pub pipeline_kind: PipelineKind<T>
+}
+
+/// Contains information about the callback
+#[cfg(feature = "full_log")]
+#[derive(Debug, Clone)]
+pub(crate) enum PipelineTrack {
+    Exact(String),
+    UnmatchedMethod(String),
+    File(String),
+    Default(String),
+    #[cfg(feature = "stream")]
+    Stream(String)
+}
+
+#[cfg(feature = "full_log")]
+impl PipelineTrack {
+    #[cfg(feature = "full_log")]
+    pub(crate) fn preconcat<A: AsRef<str>>(&mut self, token: A) {
+        match self {
+            PipelineTrack::Exact(s) | PipelineTrack::UnmatchedMethod(s) | PipelineTrack::File(s) | PipelineTrack::Default(s) => {
+                if s.is_empty() {
+                    *s = token.as_ref().to_string();
+                } else {
+                    *s = format!("{}/{}", token.as_ref(), s);
+                }
+            },
+            #[cfg(feature = "stream")]
+            PipelineTrack::Stream(s) => {
+                if s.is_empty() {
+                    *s = token.as_ref().to_string();
+                } else {
+                    *s = format!("{}/{}", token.as_ref(), s);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "full_log")]
+impl std::fmt::Display for PipelineTrack {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let content = match self {
+            PipelineTrack::Exact(s) => format!("Exact({})", s),
+            PipelineTrack::UnmatchedMethod(s) => format!("UnmatchedMethod({})", s),
+            PipelineTrack::File(s) => format!("File({})", s),
+            PipelineTrack::Default(s) => format!("Default({})", s),
+            #[cfg(feature = "stream")]
+            PipelineTrack::Stream(s) => format!("Stream({})", s)
+        };
+        write!(formatter, "{}", content)
+    } 
+}
+
 /// Wrapper pipeline for the server to work with
 pub(crate) enum PipelineKind<T> {
-    NormalPipeline(Pipeline<T>),
+    NormalPipeline{
+        pipeline: Pipeline<T>
+    },
     #[cfg(feature = "stream")]
-    StreamPipeline(Arc<HandlerFn<T>>)
+    StreamPipeline{
+        pipeline: Arc<HandlerFn<T>>
+    }
 }
 
 /// Pipeline type, contains either a layer or the core of the pipeline
@@ -69,7 +131,7 @@ macro_rules! callback_for_many {
     }
 }
 
-// We implement the trait for up to 7 arguments at the moment
+// We implement the trait for up to 8 arguments at the moment
 callback_for_many!(A 0);
 callback_for_many!(A 0, B 1);
 callback_for_many!(A 0, B 1, C 2);
@@ -77,12 +139,14 @@ callback_for_many!(A 0, B 1, C 2, D 3);
 callback_for_many!(A 0, B 1, C 2, D 3, E 4);
 callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5);
 callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
 
 
 /// Type for the core handler, that is, as a [CoreFn](CoreFn) but can also take a stream (after valid http request processing)
 #[cfg(feature = "stream")]
 pub type HandlerFn<T> = Box<dyn Fn(Request, Arc<Additional<T>>, Stream) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
+/// StreamCallback trait, similar to a normal http callback but receives the TcpStream
 #[cfg(feature = "stream")]
 pub trait StreamCallback<A> {
     fn invoke(&self, stream: Stream, args: A) -> Pin<Box<dyn Future<Output = ()>  + Send>>;
@@ -124,3 +188,5 @@ stream_callback_for_many!(A 0, B 1, C 2);
 stream_callback_for_many!(A 0, B 1, C 2, D 3);
 #[cfg(feature = "stream")]
 stream_callback_for_many!(A 0, B 1, C 2, D 3, E 4);
+#[cfg(feature = "stream")]
+stream_callback_for_many!(A 0, B 1, C 2, D 3, E 4, F 5);

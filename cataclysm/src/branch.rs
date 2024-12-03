@@ -6,9 +6,11 @@ use crate::{
     CoreFn, LayerFn, Extractor, Callback, Pipeline,
     http::{Method, Request, Response, MethodHandler}
 };
-use crate::metafunctions::callback::PipelineKind;
+use crate::metafunctions::callback::{PipelineKind, PipelineInfo};
 #[cfg(feature = "stream")]
 use crate::{HandlerFn, StreamCallback, Stream};
+#[cfg(feature = "full_log")]
+use crate::metafunctions::callback::{PipelineTrack};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -206,8 +208,15 @@ impl<T: Sync + Send> Branch<T> {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(_e) => {
                     #[cfg(feature = "full_log")]
-                    log::error!("extractor error: {}", _e);
-                    (async {Response::bad_request()}).boxed()
+                    {
+                        log::error!("extractor error: {}", _e);
+                        let response = _e.as_response();
+                        (async {response}).boxed()
+                    }
+                    #[cfg(not(feature = "full_log"))]
+                    {
+                        (async {Response::bad_request()}).boxed()
+                    }
                 }
             }
         })));
@@ -231,8 +240,15 @@ impl<T: Sync + Send> Branch<T> {
                 Ok(args) => callback.invoke(args).boxed(),
                 Err(_e) => {
                     #[cfg(feature = "full_log")]
-                    log::error!("extractor error: {}", _e);
-                    (async {Response::bad_request()}).boxed()
+                    {
+                        log::error!("extractor error: {}", _e);
+                        let response = _e.as_response();
+                        (async {response}).boxed()
+                    }
+                    #[cfg(not(feature = "full_log"))]
+                    {
+                        (async {Response::bad_request()}).boxed()
+                    }
                 }
             }
         })));
@@ -511,15 +527,29 @@ impl<T: Sync + Send> Branch<T> {
                 Ok(args) => handler.invoke(stream, args).boxed(),
                 Err(_e) => {
                     #[cfg(feature = "full_log")]
-                    log::error!("extractor error: {}", _e);
-                    // We use the stream to send the request
-                    (async move {match stream.response(Response::bad_request()).await {
-                        Ok(_) => (),
-                        Err(_e) => {
-                            #[cfg(feature = "full_log")]
-                            log::debug!("stream reply error: {}", _e);
-                        }
-                    };}).boxed()
+                    {
+                        log::error!("extractor error: {}", _e);
+                        let response = _e.as_response();
+                        // We use the stream to send the request
+                        (async move {match stream.response(response).await {
+                            Ok(_) => (),
+                            Err(_e) => {
+                                #[cfg(feature = "full_log")]
+                                log::debug!("stream reply error: {}", _e);
+                            }
+                        };}).boxed()
+                    }
+                    #[cfg(not(feature = "full_log"))]
+                    {
+                        // We use the stream to send the request
+                        (async move {match stream.response(Response::bad_request()).await {
+                            Ok(_) => (),
+                            Err(_e) => {
+                                #[cfg(feature = "full_log")]
+                                log::debug!("stream reply error: {}", _e);
+                            }
+                        };}).boxed()
+                    }
                 }
             }
         })));
@@ -595,14 +625,60 @@ impl<T: Sync + Send> Branch<T> {
 /// Structure that holds information to process a callback properly
 enum CallbackInformation<T> {
     ResponseHandler {
+        #[cfg(feature = "full_log")]
+        tracker: PipelineTrack,
         callback: Arc<CoreFn<T>>,
         layers: Vec<Arc<LayerFn<T>>>,
         variable_indicators: Vec<bool>
     },
     #[cfg(feature = "stream")]
     StreamHandler {
+        #[cfg(feature = "full_log")]
+        tracker: PipelineTrack,
         callback: Arc<HandlerFn<T>>,
         variable_indicators: Vec<bool>
+    }
+}
+
+impl<T> CallbackInformation<T> {
+    #[cfg(feature = "full_log")]
+    fn tracker(&self) -> PipelineTrack {
+        match self {
+            CallbackInformation::ResponseHandler{tracker,..} => {
+                tracker.clone()
+            },
+            #[cfg(feature = "stream")]
+            CallbackInformation::StreamHandler{tracker, ..} => {
+                tracker.clone()
+            }
+        }
+    }
+
+    fn update(&mut self, layers: Vec<Arc<LayerFn<T>>>, is_var: bool) {
+        match self {
+            CallbackInformation::ResponseHandler{layers: prev_layers, variable_indicators,..} => {
+                // We append the possible layers from this level
+                prev_layers.extend(layers);
+                variable_indicators.push(is_var);
+            },
+            #[cfg(feature = "stream")]
+            CallbackInformation::StreamHandler{variable_indicators, ..} => {
+                variable_indicators.push(is_var);
+            }
+        }
+    }
+
+    #[cfg(feature = "full_log")]
+    fn update_tracker<A: AsRef<str>>(&mut self, token: A) {
+        match self {
+            CallbackInformation::ResponseHandler{tracker ,..} => {
+                tracker.preconcat(token);
+            },
+            #[cfg(feature = "stream")]
+            CallbackInformation::StreamHandler{tracker, ..} => {
+                tracker.preconcat(token);
+            }
+        }
     }
 }
 
@@ -624,11 +700,14 @@ pub(crate) struct PureBranch<T> {
 
 impl<T> PureBranch<T> {
     /// Creates the pipeline of futures to be processed by the server
-    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<PipelineKind<T>> {
+    pub(crate) fn pipeline(&self, request: &mut Request) -> Option<PipelineInfo<T>> {
         // We get the core handler, and the possible layers
         if let Some(c_info) = self.callback_information(request.url().path(), &request.method) {
+            #[cfg(feature = "full_log")]
+            let pipeline_track = c_info.tracker();
+
             match c_info {
-                CallbackInformation::ResponseHandler{callback, layers, variable_indicators} => {
+                CallbackInformation::ResponseHandler{callback, layers, variable_indicators, ..} => {
                     // We have to update the variable locations
                     request.depth = variable_indicators.len();
 
@@ -641,10 +720,14 @@ impl<T> PureBranch<T> {
                         pipeline_layer = Pipeline::Layer(Arc::clone(function), Box::new(pipeline_layer));
                     }
                     // We return the nested pipeline
-                    Some(PipelineKind::NormalPipeline(pipeline_layer))
+                    Some(PipelineInfo {
+                        #[cfg(feature = "full_log")]
+                        pipeline_track,
+                        pipeline_kind: PipelineKind::NormalPipeline{pipeline: pipeline_layer}
+                    })
                 },
                 #[cfg(feature = "stream")]
-                CallbackInformation::StreamHandler{callback, variable_indicators} => {
+                CallbackInformation::StreamHandler{callback, variable_indicators, ..} => {
                     // We have to update the variable locations
                     request.depth = variable_indicators.len();
 
@@ -652,7 +735,11 @@ impl<T> PureBranch<T> {
                         .iter().rev().enumerate().filter(|(_idx, v)| **v)
                         .map(|(idx, _v)| idx).collect();
                     
-                    Some(PipelineKind::StreamPipeline(callback))
+                    Some(PipelineInfo{
+                        #[cfg(feature = "full_log")]
+                        pipeline_track,
+                        pipeline_kind: PipelineKind::StreamPipeline{pipeline: callback}
+                    })
                 }
             }
         } else {
@@ -723,28 +810,36 @@ impl<T> PureBranch<T> {
     ///
     /// For internal use only. This function shares code with the `supported_methods` function. Requires some way to abstract it.
     fn callback_information<A: AsRef<str>>(&self, trail: A, method: &Method) -> Option<CallbackInformation<T>> {
-        // Tokenizamos la cadena
+        // Tokenizamos la cadena, quitando la primer diagonal si es que existe
         let trimmed_trail = trail.as_ref().trim_start_matches("/");
         
         let (base, rest) = if let Some((base, rest)) = trimmed_trail.tokenize_once() {
+            // Corta en la primer diagonal que encuentre, dejando lo demás en rest
             (base.to_string(), rest.to_string())
         } else {
-            // Only one token here
+            // Ya sólo queda un token aquí.
             if trimmed_trail.is_empty() {
+                // Estamos en el endpoint final de la cadena
                 return if let Some(mc) = self.method_callbacks.get(method) {
                     Some(CallbackInformation::ResponseHandler {
+                        #[cfg(feature = "full_log")]
+                        tracker: PipelineTrack::Exact("".to_string()),
                         callback: mc.clone(),
                         layers: self.layers.clone(),
                         variable_indicators: vec![]
                     })
                 } else if let Some(dmc) = &self.default_method_callback {
                     Some(CallbackInformation::ResponseHandler {
+                        #[cfg(feature = "full_log")]
+                        tracker: PipelineTrack::UnmatchedMethod("".to_string()),
                         callback: dmc.clone(),
                         layers: self.layers.clone(),
                         variable_indicators: vec![]
                     })
                 } else if let Some(dc) = &self.default_callback {
                     Some(CallbackInformation::ResponseHandler {
+                        #[cfg(feature = "full_log")]
+                        tracker: PipelineTrack::Default("".to_string()),
                         callback: dc.clone(),
                         layers: self.layers.clone(),
                         variable_indicators: vec![]
@@ -754,6 +849,8 @@ impl<T> PureBranch<T> {
                     {
                         if let Some(sh) = &self.stream_handler {
                             Some(CallbackInformation::StreamHandler {
+                                #[cfg(feature = "full_log")]
+                                tracker: PipelineTrack::Stream("".to_string()),
                                 callback: sh.clone(),
                                 variable_indicators: vec![]
                             })
@@ -771,16 +868,17 @@ impl<T> PureBranch<T> {
             }
         };
 
-        // First, exact matching through hash lookup
+        // Si llegamos aquí, quiere decir que aún debemos hacer match de rama
         let mut result = None;
         // Indicator of a variable part of the route
         let mut is_var = true;
 
         if let Some(branch) = self.exact_branches.get(&base) {
+            // Hubo un match exacto con rama exacta
             is_var = false;
             result = branch.callback_information(rest, method);
         } else {
-            // Now, O(n) regex pattern matching
+            // Iteramos por todas las ramas que tienen regex, tiempo O(n)
             for (pattern, branch) in self.pattern_branches.iter() {
                 if pattern.is_match(&base) {
                     result = branch.callback_information(&rest, method);
@@ -789,7 +887,7 @@ impl<T> PureBranch<T> {
             }
 
             if result.is_none() {
-                // Finally, if there is a variable, we reply (constant time)
+                // Si hay rama con variable, aquí se llama de inmediato
                 if let Some((_id, branch)) = &self.variable_branch {
                     result = branch.callback_information(rest, method);
                 }
@@ -798,6 +896,14 @@ impl<T> PureBranch<T> {
 
         match result.iter_mut().next() {
             Some(c_info) => {
+                // Hubo una coincidencia, concatenamos capas si es que existen, y añadimos los indicadores de variables
+                c_info.update(self.layers.clone(), is_var);
+
+                #[cfg(feature = "full_log")]
+                {
+                    c_info.update_tracker(&base);
+                }
+                /*
                 match c_info {
                     CallbackInformation::ResponseHandler{layers, variable_indicators,..} => {
                         // We append the possible layers from this level
@@ -809,12 +915,15 @@ impl<T> PureBranch<T> {
                         variable_indicators.push(is_var);
                     }
                 }
+                */
             },
             None => {
-                // Now, there was not match at all. First, we verify if the path is a file
+                // No hubo coincidencia alguna. Podría ser un archivo y el endpoint de archivos estar habilitado
                 if std::path::Path::new(trimmed_trail).extension().is_some() {
                     if let Some(fc) = &self.files_callback {
                         result = Some(CallbackInformation::ResponseHandler {
+                            #[cfg(feature = "full_log")]
+                            tracker: PipelineTrack::File("".to_string()),
                             callback: Arc::clone(fc),
                             layers: self.layers.clone(),
                             variable_indicators: vec![]
@@ -822,10 +931,12 @@ impl<T> PureBranch<T> {
                     }
                 }
 
-                // Last, if there is a default callback, we call it.
+                // Si llegamos aquí, ya sólo queda probar el callback por defecto.
                 if result.is_none() {
                     if let Some(dc) = &self.default_callback {
                         result = Some(CallbackInformation::ResponseHandler {
+                            #[cfg(feature = "full_log")]
+                            tracker: PipelineTrack::Default("".to_string()),
                             callback: Arc::clone(dc),
                             layers: self.layers.clone(),
                             variable_indicators: vec![]

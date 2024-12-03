@@ -1,5 +1,5 @@
 use tokio::{
-    sync::Semaphore,
+    sync::{Semaphore, OwnedSemaphorePermit},
     net::{TcpListener, TcpStream}
     //io::AsyncWriteExt
 };
@@ -126,6 +126,8 @@ impl<T: Sync + Send> ServerBuilder<T> {
     /// * `%P`: Path from the request
     /// * `%S`: Status from the response
     /// * `%A`: Socket address and port from the connection
+    /// * `%F`: Responder path, where the callback was found (if any). Only available with the `full_log` feature.
+    /// * `%f`: Same as previous but skipping file serving.
     /// (more data to be added soon)
     pub fn log_format<A: Into<String>>(mut self, log_string: A) -> Self {
         self.log_string = Some(log_string.into());
@@ -238,38 +240,55 @@ impl<T: 'static + Sync + Send> Server<T> {
 
         log::info!("Cataclysm ongoing \u{26c8}");
         #[cfg(feature = "full_log")]
-        log::warn!("using the `full_log` feature might impact performance");
+        log::warn!("using the `full_log` feature might impact performance and leak sensible information. Disable in production.");
         // We need a fused future for the select macro
         tokio::select! {
             _ = async {
                 loop {
                     // We lock the loop until one permit becomes available
-                    self.max_connections.acquire().await.unwrap().forget();
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] semaphore contains {} available permits", self.max_connections.available_permits());
+                    let permit = match self.max_connections.clone().acquire_owned().await {
+                        Ok(p) => {
+                            #[cfg(feature = "full_log")]
+                            log::trace!("[server] permit obtained, {} remaining permits", self.max_connections.available_permits());
+                            p
+                        },
+                        Err(_) => {
+                            log::error!("[server] semaphore seems to be closed, terminating al processes");
+                            break;
+                        }
+                    };
                     
                     match listener.accept().await {
                         Ok((socket, addr)) => {
                             #[cfg(feature = "full_log")]
-                            log::trace!("socket connection accepted");
+                            log::trace!("[server] socket connection accepted");
                             let server = Arc::clone(self);
                             
                             tokio::spawn(async move {
                                 tokio::select! {
-                                    res = server.dispatch(socket, addr) => match res {
-                                        Ok(_) => (),
+                                    res = server.dispatch(socket, addr, permit) => match res {
+                                        Ok(_) => {
+                                            #[cfg(feature = "full_log")]
+                                            log::trace!("[server] connection successfully dispatched");
+                                        },
                                         Err(e) => {
-                                            log::error!("{}", e);
+                                            log::error!("[server] error on dispatch call, {}", e);
                                         }
                                     },
                                     _ = tokio::time::sleep(*server.timeout) => {
-                                        log::debug!("timeout for http response");
+                                        #[cfg(feature = "full_log")]
+                                        log::trace!("[server] timeout for http response");
                                     }
                                 }
-                                // We set up back the permits
-                                server.max_connections.add_permits(1);
                             });
+
+                            #[cfg(feature = "full_log")]
+                            log::trace!("[server] waiting for new socket connection...");
                         },
                         Err(e) => {
-                            log::error!("{}", e);
+                            log::error!("[server] error on listening, {}", e);
                         }
                     }
                 }
@@ -369,7 +388,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                     if n != current_chunk.remaining() {
                         // There are some bytes still to be written in this chunk
                         #[cfg(feature = "full_log")]
-                        log::debug!("incomplete chunk, trying to serve remaining bytes ({}/{})", current_chunk.len(), RESPONSE_CHUNK_SIZE);
+                        log::trace!("incomplete chunk, trying to serve remaining bytes ({}/{})", current_chunk.len(), RESPONSE_CHUNK_SIZE);
                         current_chunk.advance(n);
                         continue;
                     } else {
@@ -387,20 +406,20 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
     }
 
-    async fn dispatch(self: &Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr) -> Result<(), Error> {
+    async fn dispatch(self: &Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr, permit: OwnedSemaphorePermit) -> Result<(), Error> {
         // let mut second_part = false;
         let request_bytes = match Server::<T>::dispatch_read(&socket, addr).await? {
             Some(b) => b,
             None => return Ok(())
         };
 
-        let stream = Stream::new(socket);
+        let stream = Stream::new(socket, Some(permit));
 
-        let mut request =match Request::parse(request_bytes.clone(), addr) {
+        let mut request = match Request::parse(request_bytes.clone(), addr) {
             Ok(r) => r,
             Err(_e) => {
                 #[cfg(feature = "full_log")]
-                log::debug!("{}", _e);
+                log::trace!("[server] error when parsing request, {}", _e);
                 stream.response(Response::bad_request()).await?;
                 return Ok(())
             }
@@ -409,6 +428,8 @@ impl<T: 'static + Sync + Send> Server<T> {
         if let Some(cors) = &*self.cors {
             if request.method == Method::Options {
                 if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] replying to preflight cors call");
                     stream.response(cors.preflight(&request, &supported_methods)).await?;
                 } // If the method is not options, it will anyways return a not-found
             }
@@ -416,22 +437,30 @@ impl<T: 'static + Sync + Send> Server<T> {
 
         request.addr = addr;
 
+        #[cfg(feature = "full_log")]
+        let mut tracker = None;
+
         // The method will take the request, and modify particularly the "variable count" variable
         let mut response = match self.pure_branch.pipeline(&mut request) {
-            Some(pipeline_kind) => {
-                match pipeline_kind {
-                    PipelineKind::NormalPipeline(pipeline) => {
+            Some(pipeline_info) => {
+                #[cfg(feature = "full_log")]
+                {
+                    tracker = Some(pipeline_info.pipeline_track);
+                }
+
+                match pipeline_info.pipeline_kind {
+                    PipelineKind::NormalPipeline{pipeline} => {
                         #[cfg(feature = "full_log")]
-                        log::trace!("found path {} with method {}", request.url, request.method);
+                        log::trace!("[server] found normal pipeline for path {} with method {}", request.url, request.method);
                         match pipeline {
                             Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
                             Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
                         }.await
                     },
                     #[cfg(feature = "stream")]
-                    PipelineKind::StreamPipeline(pipeline) => {
+                    PipelineKind::StreamPipeline{pipeline} => {
                         #[cfg(feature = "full_log")]
-                        log::trace!("found stream path {}", request.url);
+                        log::trace!("[server] found stream pipeline for path {}", request.url);
                         pipeline(request.clone(), self.additional.clone(), stream).await;
                         return Ok(())
                     }
@@ -439,7 +468,7 @@ impl<T: 'static + Sync + Send> Server<T> {
             },
             None => {
                 #[cfg(feature = "full_log")]
-                log::trace!("path {} not found, with method {}", request.url, request.method);
+                log::trace!("[server] pipeline for path {} with method {} not found", request.url, request.method);
                 Response::not_found()
             }
         };
@@ -450,11 +479,31 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
 
         if let Some(log_string) = &*self.log_string {
-            log::info!("{}", log_string.replace("%M", request.method.to_str()).replace("%P", &request.url().path()).replace("%A", &format!("{}", addr)).replace("%S", &format!("{}", response.status.0)));
+            #[allow(unused_mut)]
+            let mut final_log_string = log_string.replace("%M", request.method.to_str())
+                .replace("%P", &request.url().path())
+                .replace("%A", &format!("{}", addr))
+                .replace("%S", &format!("{}", response.status.0));
+            #[cfg(feature = "full_log")]
+            {
+                if log_string.contains("%f") {
+                    if matches!(tracker, Some(crate::metafunctions::callback::PipelineTrack::File(_))) {
+                        final_log_string = "".to_string();
+                    }
+                }
+                let replacer = tracker.map(|t| format!("{}", t)).unwrap_or_else(|| "NoTrack".to_string());
+                final_log_string = final_log_string
+                    .replace(&"%F", &replacer)
+                    .replace(&"%f", &replacer);
+            }
+
+
+            if !final_log_string.is_empty() {
+                log::info!("{}", final_log_string);
+            }
         }
 
         stream.response(response).await?;
-        //Server::<T>::dispatch_write(&stream.into(), response).await?;
         Ok(())
     }
 }
