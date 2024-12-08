@@ -1,5 +1,6 @@
-use crate::{http::Request, Error, additional::Additional};
+use crate::{http::{Request, Method}, Error, additional::Additional};
 use std::sync::Arc;
+use core::net::{SocketAddr};
 
 /// Extractor trait
 ///
@@ -24,6 +25,24 @@ impl<T: Sync> Extractor<T> for String {
 impl<T: Sync> Extractor<T> for Request {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
         Ok(req.clone())
+    }
+}
+
+impl<T: Sync> Extractor<T> for SocketAddr {
+    fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
+        Ok(req.address())
+    }
+}
+
+impl<T: Sync> Extractor<T> for Method {
+    fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
+        Ok(req.method().clone())
+    }
+}
+
+impl<T: Sync> Extractor<T> for url::Url {
+    fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
+        Ok(req.url().clone())
     }
 }
 
