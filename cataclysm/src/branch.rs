@@ -173,7 +173,7 @@ impl<T: Sync + Send> Branch<T> {
     ///     Response::ok().body("hello")
     /// }
     ///
-    /// // Branch that will reply go a get method in `/scope`
+    /// // Branch that will reply to a get method in `/scope`
     /// let branch: Branch<()> = Branch::new("/scope").with(Method::Get.to(index));
     /// ```
     pub fn with(mut self, method_callback: MethodHandler<T>) -> Self {

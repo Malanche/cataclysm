@@ -1,6 +1,6 @@
 use tokio::{
-    sync::{Semaphore, OwnedSemaphorePermit},
-    net::{TcpListener, TcpStream}
+    sync::{Semaphore},
+    net::{TcpListener}
     //io::AsyncWriteExt
 };
 use bytes::Buf;
@@ -265,21 +265,19 @@ impl<T: 'static + Sync + Send> Server<T> {
                             #[cfg(feature = "full_log")]
                             log::trace!("[server] socket connection accepted");
                             let server = Arc::clone(self);
+
+                            let stream = Stream::new(socket, Some(permit));
                             
                             tokio::spawn(async move {
-                                tokio::select! {
-                                    res = server.dispatch(socket, addr, permit) => match res {
-                                        Ok(_) => {
-                                            #[cfg(feature = "full_log")]
-                                            log::trace!("[server] connection successfully dispatched");
-                                        },
-                                        Err(e) => {
+                                match server.dispatch(stream, addr, *server.timeout).await {
+                                    Ok(_) => {
+                                        #[cfg(feature = "full_log")]
+                                        log::trace!("[server] connection successfully dispatched");
+                                    },
+                                    Err(e) => {
+                                        if !matches!(e, Error::Timeout) {
                                             log::error!("[server] error on dispatch call, {}", e);
                                         }
-                                    },
-                                    _ = tokio::time::sleep(*server.timeout) => {
-                                        #[cfg(feature = "full_log")]
-                                        log::trace!("[server] timeout for http response");
                                     }
                                 }
                             });
@@ -301,7 +299,7 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     /// Deals with the read part of the socket stream
-    async fn dispatch_read(socket: &TcpStream, addr: std::net::SocketAddr) -> Result<Option<Vec<u8>>, Error> {
+    async fn dispatch_read(socket: &Stream, addr: std::net::SocketAddr) -> Result<Option<Vec<u8>>, Error> {
         let mut request_bytes = Vec::with_capacity(READ_CHUNK_SIZE);
         let mut expected_length = None;
         let mut header_size = 0;
@@ -367,7 +365,7 @@ impl<T: 'static + Sync + Send> Server<T> {
         Ok(Some(request_bytes))
     }
 
-    async fn dispatch_write(socket: &TcpStream, mut response: Response) -> Result<(), Error> {
+    async fn dispatch_write(socket: &Stream, mut response: Response) -> Result<(), Error> {
         let serialized_response = response.serialize();
         let mut chunks_iter = serialized_response.chunks(RESPONSE_CHUNK_SIZE);
         #[cfg(feature = "full_log")]
@@ -406,104 +404,145 @@ impl<T: 'static + Sync + Send> Server<T> {
         }
     }
 
-    async fn dispatch(self: &Arc<Self>, socket: TcpStream, addr: std::net::SocketAddr, permit: OwnedSemaphorePermit) -> Result<(), Error> {
-        // let mut second_part = false;
-        let request_bytes = match Server::<T>::dispatch_read(&socket, addr).await? {
-            Some(b) => b,
-            None => return Ok(())
-        };
-
-        let stream = Stream::new(socket, Some(permit));
-
-        let mut request = match Request::parse(request_bytes.clone(), addr) {
-            Ok(r) => r,
-            Err(_e) => {
-                #[cfg(feature = "full_log")]
-                log::trace!("[server] error when parsing request, {}", _e);
-                stream.response(Response::bad_request()).await?;
-                return Ok(())
-            }
-        };
-
-        if let Some(cors) = &*self.cors {
-            if request.method == Method::Options {
-                if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
-                    #[cfg(feature = "full_log")]
-                    log::trace!("[server] replying to preflight cors call");
-                    stream.response(cors.preflight(&request, &supported_methods)).await?;
-                } // If the method is not options, it will anyways return a not-found
-            }
-        }
-
-        request.addr = addr;
-
+    async fn dispatch(self: &Arc<Self>, stream: Stream, addr: std::net::SocketAddr, mut timeout: std::time::Duration) -> Result<(), Error> {
+        let mut remaining_per_connection = None;
+        let default_max_times = 100;
         #[cfg(feature = "full_log")]
-        let mut tracker = None;
-
-        // The method will take the request, and modify particularly the "variable count" variable
-        let mut response = match self.pure_branch.pipeline(&mut request) {
-            Some(pipeline_info) => {
-                #[cfg(feature = "full_log")]
-                {
-                    tracker = Some(pipeline_info.pipeline_track);
-                }
-
-                match pipeline_info.pipeline_kind {
-                    PipelineKind::NormalPipeline{pipeline} => {
-                        #[cfg(feature = "full_log")]
-                        log::trace!("[server] found normal pipeline for path {} with method {}", request.url, request.method);
-                        match pipeline {
-                            Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
-                            Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
-                        }.await
-                    },
-                    #[cfg(feature = "stream")]
-                    PipelineKind::StreamPipeline{pipeline} => {
-                        #[cfg(feature = "full_log")]
-                        log::trace!("[server] found stream pipeline for path {}", request.url);
-                        pipeline(request.clone(), self.additional.clone(), stream).await;
-                        return Ok(())
-                    }
-                }
-            },
-            None => {
-                #[cfg(feature = "full_log")]
-                log::trace!("[server] pipeline for path {} with method {} not found", request.url, request.method);
-                Response::not_found()
+        let mut attended_paths = Vec::new();
+        loop {
+            if remaining_per_connection == Some(0) {
+                break;
             }
-        };
 
-        // Cors validation, not as an actual pipeline layer
-        if let Some(cors) = &*self.cors {
-            cors.apply(&request, &mut response);
-        }
+            let request_bytes = tokio::select!{
+                res = Server::<T>::dispatch_read(&stream, addr) => match res {
+                    Ok(request_bytes) => match request_bytes {
+                        Some(b) => b,
+                        None => return Ok(())
+                    },
+                    Err(e) => return Err(e)
+                },
+                _ = tokio::time::sleep(timeout) => {
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] timeout for http response, after attending {:?}", attended_paths);
+                    return Err(Error::Timeout)
+                }
+            };
+    
+            let mut request = match Request::parse(request_bytes.clone(), addr) {
+                Ok(r) => r,
+                Err(_e) => {
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] error when parsing request, {}", _e);
+                    stream.response(Response::bad_request()).await?;
+                    return Ok(())
+                }
+            };
 
-        if let Some(log_string) = &*self.log_string {
-            #[allow(unused_mut)]
-            let mut final_log_string = log_string.replace("%M", request.method.to_str())
-                .replace("%P", &request.url().path())
-                .replace("%A", &format!("{}", addr))
-                .replace("%S", &format!("{}", response.status.0));
             #[cfg(feature = "full_log")]
             {
-                if log_string.contains("%f") {
-                    if matches!(tracker, Some(crate::metafunctions::callback::PipelineTrack::File(_))) {
-                        final_log_string = "".to_string();
-                    }
+                log::trace!("[server] headers: {:?}", request.headers);
+                attended_paths.push(format!("{}", request.url().path()));
+            }
+    
+            if let Some(cors) = &*self.cors {
+                if request.method == Method::Options {
+                    if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
+                        #[cfg(feature = "full_log")]
+                        log::trace!("[server] replying to preflight cors call");
+                        stream.response(cors.preflight(&request, &supported_methods)).await?;
+                    } // If the method is not options, it will anyways return a not-found
                 }
-                let replacer = tracker.map(|t| format!("{}", t)).unwrap_or_else(|| "NoTrack".to_string());
-                final_log_string = final_log_string
-                    .replace(&"%F", &replacer)
-                    .replace(&"%f", &replacer);
             }
-
-
-            if !final_log_string.is_empty() {
-                log::info!("{}", final_log_string);
+    
+            request.addr = addr;
+    
+            #[cfg(feature = "full_log")]
+            let mut tracker = None;
+    
+            // The method will take the request, and modify particularly the "variable count" variable
+            let mut response = match self.pure_branch.pipeline(&mut request) {
+                Some(pipeline_info) => {
+                    #[cfg(feature = "full_log")]
+                    {
+                        tracker = Some(pipeline_info.pipeline_track);
+                    }
+    
+                    match pipeline_info.pipeline_kind {
+                        PipelineKind::NormalPipeline{pipeline} => {
+                            #[cfg(feature = "full_log")]
+                            log::trace!("[server] found normal pipeline for path {} with method {}", request.url, request.method);
+                            match pipeline {
+                                Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
+                                Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
+                            }.await
+                        },
+                        #[cfg(feature = "stream")]
+                        PipelineKind::StreamPipeline{pipeline} => {
+                            #[cfg(feature = "full_log")]
+                            log::trace!("[server] found stream pipeline for path {}", request.url);
+                            pipeline(request.clone(), self.additional.clone(), stream).await;
+                            return Ok(())
+                        }
+                    }
+                },
+                None => {
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] pipeline for path {} with method {} not found", request.url, request.method);
+                    Response::not_found()
+                }
+            };
+    
+            let should_keep_alive = request.requests_keep_alive(); 
+    
+            if let Some(remaining_per_connection) = &mut remaining_per_connection {
+                *remaining_per_connection -= 1;
+            } else {
+                if should_keep_alive {
+                    #[cfg(feature = "full_log")]
+                    log::trace!("[server] keep alive request received, setting new timeout to 5 seconds, and maximum 100 calls");
+                    response = response.header("Keep-Alive", "timeout=5, max=200");
+                    timeout = std::time::Duration::from_secs(5);
+                    remaining_per_connection = Some(default_max_times);
+                } else {
+                    remaining_per_connection = Some(0);
+                }
             }
+    
+            // Cors validation, not as an actual pipeline layer
+            if let Some(cors) = &*self.cors {
+                cors.apply(&request, &mut response);
+            }
+    
+            if let Some(log_string) = &*self.log_string {
+                #[allow(unused_mut)]
+                let mut final_log_string = log_string.replace("%M", request.method.to_str())
+                    .replace("%P", &request.url().path())
+                    .replace("%A", &format!("{}", addr))
+                    .replace("%S", &format!("{}", response.status.0));
+                #[cfg(feature = "full_log")]
+                {
+                    if log_string.contains("%f") {
+                        if matches!(tracker, Some(crate::metafunctions::callback::PipelineTrack::File(_))) {
+                            final_log_string = "".to_string();
+                        }
+                    }
+                    let replacer = tracker.map(|t| format!("{}", t)).unwrap_or_else(|| "NoTrack".to_string());
+                    final_log_string = final_log_string
+                        .replace(&"%F", &replacer)
+                        .replace(&"%f", &replacer);
+                }
+    
+    
+                if !final_log_string.is_empty() {
+                    log::info!("{}", final_log_string);
+                }
+            }
+    
+            stream.response(response).await?;
         }
-
-        stream.response(response).await?;
+        #[cfg(feature = "full_log")]
+        log::trace!("[server] leaving dispatch method");
         Ok(())
     }
 }

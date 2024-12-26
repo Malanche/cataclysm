@@ -109,6 +109,15 @@ impl Stream {
     }
 }
 
+impl std::ops::Deref for Stream {
+    type Target = TcpStream;
+
+    // Required method
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 // Reference access to the inner structure
 impl AsRef<TcpStream> for Stream {
     fn as_ref(&self) -> &TcpStream {

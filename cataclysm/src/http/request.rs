@@ -105,6 +105,10 @@ impl Request {
             content
         })
     }
+
+    pub(crate) fn requests_keep_alive(&self) -> bool {
+        self.headers.get("Connection").map(|values| values.into_iter().find(|v| *v == "keep-alive")).flatten().is_some()
+    }
 }
 
 pub struct BasicRequest {

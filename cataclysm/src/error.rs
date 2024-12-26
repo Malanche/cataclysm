@@ -8,6 +8,8 @@ pub enum Error {
     Io(std::io::Error),
     /// Could not parse properly the http request, malformed
     Parse(String),
+    /// Waiting time for the client got exceeded
+    Timeout,
     /// Error from url parsing
     Url(url::ParseError),
     /// Could not extract parameter from request. Indicating a bad request.
@@ -39,6 +41,7 @@ impl Error {
         let (mut base_response, content) = match self {
             Error::Io(e) => (Response::internal_server_error(), ErrorResponse{detail: format!("{}", e)}),
             Error::Parse(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
+            Error::Timeout => (Response::bad_request(), ErrorResponse{detail: format!("timeout reached")}),
             Error::Url(e) => (Response::bad_request(), ErrorResponse{detail: format!("{}", e)}),
             Error::ExtractionBR(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
             Error::ExtractionSE(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()}),
@@ -64,6 +67,7 @@ impl std::fmt::Display for Error {
         let content = match self {
             Error::Io(inner_error) => format!("io error: {}", inner_error),
             Error::Parse(detail) => format!("parse error: {}", detail),
+            Error::Timeout => format!("timeout reached"),
             Error::Url(detail) => format!("url parse error: {}", detail),
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
