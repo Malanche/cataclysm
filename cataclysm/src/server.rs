@@ -8,7 +8,7 @@ use crate::metafunctions::callback::PipelineKind;
 use crate::{
     Stream,
     Branch, Shared, Additional, Cors, branch::PureBranch, Pipeline, Error, session::SessionCreator,
-    http::{Request, Response, Method}
+    http::{Request, RequestHeader, Response, Method}
 };
 use std::sync::{Arc};
 
@@ -299,11 +299,10 @@ impl<T: 'static + Sync + Send> Server<T> {
     }
 
     /// Deals with the read part of the socket stream
-    async fn dispatch_read(socket: &Stream, addr: std::net::SocketAddr) -> Result<Option<Vec<u8>>, Error> {
+    async fn dispatch_read(socket: &Stream, addr: std::net::SocketAddr) -> Result<Option<Request>, Error> {
         let mut request_bytes = Vec::with_capacity(READ_CHUNK_SIZE);
         let mut expected_length = None;
-        let mut header_size = 0;
-        let mut request = None;
+        let mut request_header = None;
         // First we read
         loop {
             socket.readable().await.map_err(|e| Error::Io(e))?;
@@ -320,8 +319,8 @@ impl<T: 'static + Sync + Send> Server<T> {
                 Ok(n) => {
                     request_bytes.extend_from_slice(&buf[0..n]);
 
-                    if request.is_none() {
-                        request = match Request::parse(request_bytes.clone(), addr) {
+                    if request_header.is_none() {
+                        request_header = match RequestHeader::parse(&mut request_bytes, addr) {
                             Ok(r) => {
                                 // We check if we need to give a continue 100
                                 if r.headers.get("Expect").map(|h| h.get(0).map(|ih| ih == "100-continue")).flatten().unwrap_or(false) {
@@ -333,7 +332,6 @@ impl<T: 'static + Sync + Send> Server<T> {
                                 expected_length = r.headers.get("Content-Length").or_else(|| r.headers.get("content-length")).map(|cl| cl.get(0).map(|v| v.parse::<usize>().ok())).flatten().flatten();
                                 #[cfg(feature = "full_log")]
                                 log::trace!("expecting to read {:?} bytes in request", expected_length);
-                                header_size = r.header_size;
                                 Some(r)
                             },
                             Err(_e) => {
@@ -347,7 +345,7 @@ impl<T: 'static + Sync + Send> Server<T> {
 
                     // And now we check if, given the hint, we need to act upon.
                     if let Some(expected_length) = &expected_length {
-                        if *expected_length > request_bytes.len() - header_size {
+                        if *expected_length > request_bytes.len() {
                             continue;
                         } else {
                             break;
@@ -362,7 +360,8 @@ impl<T: 'static + Sync + Send> Server<T> {
                 Err(e) => return Err(Error::Io(e))
             }
         }
-        Ok(Some(request_bytes))
+
+        Ok(request_header.map(|v| v.content(request_bytes)))
     }
 
     async fn dispatch_write(socket: &Stream, mut response: Response) -> Result<(), Error> {
@@ -414,9 +413,9 @@ impl<T: 'static + Sync + Send> Server<T> {
                 break;
             }
 
-            let request_bytes = tokio::select!{
+            let mut request = tokio::select!{
                 res = Server::<T>::dispatch_read(&stream, addr) => match res {
-                    Ok(request_bytes) => match request_bytes {
+                    Ok(request) => match request {
                         Some(b) => b,
                         None => return Ok(())
                     },
@@ -429,6 +428,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                 }
             };
     
+            /*
             let mut request = match Request::parse(request_bytes.clone(), addr) {
                 Ok(r) => r,
                 Err(_e) => {
@@ -438,15 +438,16 @@ impl<T: 'static + Sync + Send> Server<T> {
                     return Ok(())
                 }
             };
+            */
 
             #[cfg(feature = "full_log")]
             {
-                log::trace!("[server] headers: {:?}", request.headers);
+                log::trace!("[server] headers: {:?}", request.header.headers);
                 attended_paths.push(format!("{}", request.url().path()));
             }
     
             if let Some(cors) = &*self.cors {
-                if request.method == Method::Options {
+                if request.header.method == Method::Options {
                     if let Some(supported_methods) = self.pure_branch.supported_methods(request.url().path()) {
                         #[cfg(feature = "full_log")]
                         log::trace!("[server] replying to preflight cors call");
@@ -455,7 +456,8 @@ impl<T: 'static + Sync + Send> Server<T> {
                 }
             }
     
-            request.addr = addr;
+            // No clue why this was here
+            // request.header.addr = addr;
     
             #[cfg(feature = "full_log")]
             let mut tracker = None;
@@ -471,7 +473,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                     match pipeline_info.pipeline_kind {
                         PipelineKind::NormalPipeline{pipeline} => {
                             #[cfg(feature = "full_log")]
-                            log::trace!("[server] found normal pipeline for path {} with method {}", request.url, request.method);
+                            log::trace!("[server] found normal pipeline for path {} with method {}", request.header.url, request.header.method);
                             match pipeline {
                                 Pipeline::Layer(func, pipeline_layer) => func(request.clone(), pipeline_layer, self.additional.clone()),
                                 Pipeline::Core(core_fn) => core_fn(request.clone(), self.additional.clone())
@@ -480,7 +482,7 @@ impl<T: 'static + Sync + Send> Server<T> {
                         #[cfg(feature = "stream")]
                         PipelineKind::StreamPipeline{pipeline} => {
                             #[cfg(feature = "full_log")]
-                            log::trace!("[server] found stream pipeline for path {}", request.url);
+                            log::trace!("[server] found stream pipeline for path {}", request.header.url);
                             pipeline(request.clone(), self.additional.clone(), stream).await;
                             return Ok(())
                         }
@@ -488,12 +490,12 @@ impl<T: 'static + Sync + Send> Server<T> {
                 },
                 None => {
                     #[cfg(feature = "full_log")]
-                    log::trace!("[server] pipeline for path {} with method {} not found", request.url, request.method);
+                    log::trace!("[server] pipeline for path {} with method {} not found", request.header.url, request.header.method);
                     Response::not_found()
                 }
             };
     
-            let should_keep_alive = request.requests_keep_alive(); 
+            let should_keep_alive = request.header.requests_keep_alive(); 
     
             if let Some(remaining_per_connection) = &mut remaining_per_connection {
                 *remaining_per_connection -= 1;
@@ -516,7 +518,7 @@ impl<T: 'static + Sync + Send> Server<T> {
     
             if let Some(log_string) = &*self.log_string {
                 #[allow(unused_mut)]
-                let mut final_log_string = log_string.replace("%M", request.method.to_str())
+                let mut final_log_string = log_string.replace("%M", request.header.method.to_str())
                     .replace("%P", &request.url().path())
                     .replace("%A", &format!("{}", addr))
                     .replace("%S", &format!("{}", response.status.0));

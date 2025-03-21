@@ -56,7 +56,7 @@ impl IntoIterator for Multipart {
 
 impl<T: Sync> Extractor<T> for Multipart {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        if let Some(content_type) = req.headers.get("Content-Type").map(|ct| ct.get(0)).flatten() {
+        if let Some(content_type) = req.header.headers.get("Content-Type").map(|ct| ct.get(0)).flatten() {
             if content_type == "application/x-www-form-urlencoded" {
                 match String::from_utf8(req.content.clone()) {
                     Ok(content) => {

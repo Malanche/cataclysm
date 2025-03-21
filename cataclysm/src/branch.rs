@@ -274,7 +274,7 @@ impl<T: Sync + Send> Branch<T> {
             (async move {
                 let trimmed_trail = req.url().path().trim_start_matches("/");
                 let tokens = trimmed_trail.tokenize();
-                let path: PathBuf = tokens.iter().skip(req.depth).collect();
+                let path: PathBuf = tokens.iter().skip(req.header.depth).collect();
                 fl_clone.push(path);
                 let extension = match fl_clone.extension().map(|e| e.to_str()).flatten() {
                     Some(e) => e,
@@ -702,16 +702,16 @@ impl<T> PureBranch<T> {
     /// Creates the pipeline of futures to be processed by the server
     pub(crate) fn pipeline(&self, request: &mut Request) -> Option<PipelineInfo<T>> {
         // We get the core handler, and the possible layers
-        if let Some(c_info) = self.callback_information(request.url().path(), &request.method) {
+        if let Some(c_info) = self.callback_information(request.header.url.path(), &request.header.method) {
             #[cfg(feature = "full_log")]
             let pipeline_track = c_info.tracker();
 
             match c_info {
                 CallbackInformation::ResponseHandler{callback, layers, variable_indicators, ..} => {
                     // We have to update the variable locations
-                    request.depth = variable_indicators.len();
+                    request.header.depth = variable_indicators.len();
 
-                    request.variable_indices = variable_indicators
+                    request.header.variable_indices = variable_indicators
                         .iter().rev().enumerate().filter(|(_idx, v)| **v)
                         .map(|(idx, _v)| idx).collect();
 
@@ -729,9 +729,9 @@ impl<T> PureBranch<T> {
                 #[cfg(feature = "stream")]
                 CallbackInformation::StreamHandler{callback, variable_indicators, ..} => {
                     // We have to update the variable locations
-                    request.depth = variable_indicators.len();
+                    request.header.depth = variable_indicators.len();
 
-                    request.variable_indices = variable_indicators
+                    request.header.variable_indices = variable_indicators
                         .iter().rev().enumerate().filter(|(_idx, v)| **v)
                         .map(|(idx, _v)| idx).collect();
                     
@@ -903,19 +903,6 @@ impl<T> PureBranch<T> {
                 {
                     c_info.update_tracker(&base);
                 }
-                /*
-                match c_info {
-                    CallbackInformation::ResponseHandler{layers, variable_indicators,..} => {
-                        // We append the possible layers from this level
-                        layers.extend(self.layers.clone());
-                        variable_indicators.push(is_var);
-                    },
-                    #[cfg(feature = "stream")]
-                    CallbackInformation::StreamHandler{variable_indicators, ..} => {
-                        variable_indicators.push(is_var);
-                    }
-                }
-                */
             },
             None => {
                 // No hubo coincidencia alguna. Podría ser un archivo y el endpoint de archivos estar habilitado

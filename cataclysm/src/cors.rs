@@ -119,8 +119,8 @@ pub struct Cors {
 
 impl Cors {
     pub(crate) fn apply(&self, request: &Request, response: &mut Response) {
-        let origin_source = request.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
-            request.headers.get("origin").map(|o| o.get(0)).flatten()
+        let origin_source = request.header.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
+            request.header.headers.get("origin").map(|o| o.get(0)).flatten()
         );
         let acao = match &self.origins {
             CorsOrigin::None => None,
@@ -162,8 +162,8 @@ impl Cors {
 
     /// Computed the preflight response
     pub(crate) fn preflight(&self, request: &Request, methods: &HashSet<Method>) -> Response {
-        let origin_source = request.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
-            request.headers.get("origin").map(|o| o.get(0)).flatten()
+        let origin_source = request.header.headers.get("Origin").map(|o| o.get(0)).flatten().or_else(||
+            request.header.headers.get("origin").map(|o| o.get(0)).flatten()
         );
         let acao = match &self.origins {
             CorsOrigin::None => None,
@@ -198,7 +198,7 @@ impl Cors {
             // Found allowed origin
             let mut response = Response::no_content();
 
-            let methods = match request.headers.get("Access-Control-Request-Method") {
+            let methods = match request.header.headers.get("Access-Control-Request-Method") {
                 Some(_) => {
                     if let Some(override_methods) = &self.methods {
                         override_methods.iter()
@@ -216,7 +216,7 @@ impl Cors {
             let headers = if let Some(override_headers) = &self.headers {
                 override_headers.iter().cloned().collect::<Vec<_>>().join(", ")
             } else {
-                match request.headers.get("Access-Control-Request-Headers").map(|acrh| acrh.get(0)).flatten() {
+                match request.header.headers.get("Access-Control-Request-Headers").map(|acrh| acrh.get(0)).flatten() {
                     Some(headers) => headers.clone(),
                     None => {
                         #[cfg(feature = "full_log")]
@@ -254,56 +254,5 @@ impl Cors {
         } else {
             Response::forbidden()
         }
-
-        /*
-        if let Some(origin) = request.headers.get("Origin").or_else(|| request.headers.get("origin")) {
-            match Url::parse(&origin) {
-                Ok(url) => {
-                    let acao = match &self.origins {
-                        CorsOrigin::None => None,
-                        CorsOrigin::All => Some("*".to_string()),
-                        CorsOrigin::List(origins) => {
-                            origins.get(&url.origin()).map(|found_origin| found_origin.ascii_serialization())
-                        }
-                    };
-
-                    if let Some(acao) = acao {
-                        // Found allowed origin
-                        let mut response = Response::no_content();
-                        // It should reply
-                        response.headers.insert(
-                            "Access-Control-Allow-Origin".to_string(),
-                            acao
-                        );
-    
-                        let methods = if let Some(override_methods) = &self.methods {
-                            override_methods.iter()
-                        } else {
-                            methods.iter()
-                        }.map(|m| m.to_str()).collect::<Vec<_>>().join(", ");
-    
-                        response.headers.insert(
-                            "Access-Control-Allow-Methods".to_string(),
-                            methods
-                        );
-    
-                        if let Some(max_age) = self.max_age {
-                            response.headers.insert(
-                                "Access-Control-Max-Age".to_string(),
-                                format!("{}", max_age)
-                            );
-                        }
-    
-                        return response;
-                    }
-                },
-                Err(_e) => {
-                    #[cfg(feature = "full_log")]
-                    log::debug!("{}, when parsing {}", _e, origin);
-                }
-            }
-        }
-        Response::forbidden()
-        */
     }
 }

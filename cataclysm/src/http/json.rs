@@ -35,8 +35,8 @@ impl<J> Json<J> {
 
 impl<T: Sync, J: 'static + DeserializeOwned + Send + Sync> Extractor<T> for Json<J> {
     fn extract(req: &Request, _additional: Arc<Additional<T>>) -> Result<Self, Error> {
-        let content_type_header = req.headers.get("content-type").map(|ct| ct.get(0)).flatten().or_else(|| 
-            req.headers.get("Content-Type").map(|ct| ct.get(0)).flatten()
+        let content_type_header = req.header.headers.get("content-type").map(|ct| ct.get(0)).flatten().or_else(|| 
+            req.header.headers.get("Content-Type").map(|ct| ct.get(0)).flatten()
         );
         if let Some(content_type_header) = content_type_header {
             if content_type_header == "application/json" {

@@ -188,8 +188,8 @@ impl CookieSession {
         // we can have multiple cookies, so we try for each one
         let empty = Vec::new();
         let cookie_headers = vec![
-            req.headers.get("Cookie").unwrap_or_else(|| &empty),
-            req.headers.get("cookie").unwrap_or_else(|| &empty)
+            req.header.headers.get("Cookie").unwrap_or_else(|| &empty),
+            req.header.headers.get("cookie").unwrap_or_else(|| &empty)
         ].into_iter().flatten();
         for cookie_header in cookie_headers {
             for single_cookie in cookie_header.split("; ") {
