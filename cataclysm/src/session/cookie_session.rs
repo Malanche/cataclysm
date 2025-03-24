@@ -2,9 +2,8 @@ use ring::{hmac::{self, Key}, rand};
 use crate::{
     Error,
     http::{Request, Response},
-    session::{SessionCreator, Session}
+    session::{SessionCreator}
 };
-use std::collections::HashMap;
 use std::time::Duration;
 use cookie::Cookie;
 use chrono::{DateTime, Utc};
@@ -183,8 +182,20 @@ impl CookieSession {
         self
     }
 
+    /// Forces errors at cookie parsing to return an error response instead of an empty session
+    ///
+    /// ```rust,no_run
+    /// use cataclysm::session::{CookieSession};
+    /// 
+    /// let cookie_session = CookieSession::new().force_failure(true);
+    /// ```
+    pub fn force_failure(mut self, force_failure: bool) -> Self {
+        self.force_failure = force_failure;
+        self
+    }
+
     /// Helper function to extract a session from a cookie
-    fn build_from_req(&self, req: &Request) -> Result<Option<Session>, Error> {
+    fn build_from_req(&self, req: &Request) -> Result<Option<String>, Error> {
         // we can have multiple cookies, so we try for each one
         let empty = Vec::new();
         let cookie_headers = vec![
@@ -203,15 +214,10 @@ impl CookieSession {
                         // I know these unwraps look unsafe, but trust me, they are, TODO FIX with let Some
                         let signature = value.get(0..44).unwrap();
                         let content = value.get(44..value.len()).unwrap();
-        
-                        // First, we try to decode the content
-                        let values = serde_json::from_str(content).map_err(|e| Error::custom(format!("{}", e)))?;
-        
                         let tag = general_purpose::STANDARD.decode(signature).map_err(|e| Error::custom(format!("{}", e)))?;
-        
                         hmac::verify(&self.key, content.as_bytes(), &tag).map_err(|e| Error::custom(format!("{}", e)))?;
         
-                        return Ok(Some(Session::new_with_values(self.clone(), values)))
+                        return Ok(Some(content.to_string()))
                     }
                 }
             }
@@ -221,13 +227,13 @@ impl CookieSession {
 }
 
 impl SessionCreator for CookieSession {
-    fn create(&self, req: &Request) -> Result<Session, Error> {
+    fn parse(&self, req: &Request) -> Result<Option<String>, Error> {
         match self.build_from_req(req) {
-            Ok(Some(session)) => Ok(session),
+            Ok(Some(content)) => Ok(Some(content)),
             Ok(None) => {
                 #[cfg(feature = "full_log")]
                 log::debug!("cookie not found among request headers");
-                Ok(Session::new(self.clone()))
+                Ok(None)
             },
             Err(e) => {
                 if self.force_failure {
@@ -235,14 +241,13 @@ impl SessionCreator for CookieSession {
                 } else {
                     #[cfg(feature = "full_log")]
                     log::debug!("error while creating session: {}", e);
-                    return Ok(Session::new(self.clone()))
+                    return Ok(None)
                 }
             }
         }
     }
 
-    fn apply(&self, values: &HashMap<String, String>, mut res: Response) -> Response {
-        let content = serde_json::to_string(values).unwrap();
+    fn apply(&self, content: String, mut res: Response) -> Result<Response, Error> {
         let signature = general_purpose::STANDARD.encode(hmac::sign(&self.key, content.as_bytes()).as_ref());
 
         let cookie_builder = Cookie::build((&self.cookie_name, format!("{}{}", signature, content)));
@@ -263,8 +268,7 @@ impl SessionCreator for CookieSession {
             match cookie::time::OffsetDateTime::from_unix_timestamp(expires.timestamp()) {
                 Ok(v) => cookie_builder.expires(v),
                 Err(e) => {
-                    log::error!("could not set expires flag to cookie, {}", e);
-                    cookie_builder
+                    return Err(Error::Session(format!("failed to set expiration to cookie, {}", e)));
                 }
             }
         } else {
@@ -275,8 +279,7 @@ impl SessionCreator for CookieSession {
             let max_age = match max_age.clone().try_into() {
                 Ok(v) => v,
                 Err(e) => {
-                    log::error!("failed to set max-age to cookie ({}), loading safety default 3,600 seconds", e);
-                    cookie::time::Duration::seconds(3_600)
+                    return Err(Error::Session(format!("failed to set max-age to cookie, {}", e)));
                 }
             };
             cookie_builder.max_age(max_age)
@@ -305,6 +308,6 @@ impl SessionCreator for CookieSession {
         let cookie = cookie_builder.build();
 
         res = res.header("Set-Cookie", format!("{}", cookie.encoded()));
-        res
+        Ok(res)
     }
 }

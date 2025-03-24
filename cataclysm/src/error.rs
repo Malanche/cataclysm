@@ -12,10 +12,14 @@ pub enum Error {
     Timeout,
     /// Error from url parsing
     Url(url::ParseError),
+    /// A problem occured during session management
+    Session(String),
     /// Could not extract parameter from request. Indicating a bad request.
     ExtractionBR(String),
     /// Could not extract parameter from request. Indicating a bad server error.
     ExtractionSE(String),
+    /// Serde json deserialization/serialization error
+    SerdeJson(serde_json::Error),
     /// Indicates a Ring error
     Ring(ring::error::Unspecified),
     /// Indicates that no session creator was set
@@ -43,8 +47,10 @@ impl Error {
             Error::Parse(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
             Error::Timeout => (Response::bad_request(), ErrorResponse{detail: format!("timeout reached")}),
             Error::Url(e) => (Response::bad_request(), ErrorResponse{detail: format!("{}", e)}),
+            Error::Session(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()}),
             Error::ExtractionBR(e) => (Response::bad_request(), ErrorResponse{detail: e.to_string()}),
             Error::ExtractionSE(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()}),
+            Error::SerdeJson(e) => (Response::internal_server_error(), ErrorResponse{detail: format!("{}", e)}),
             Error::Ring(ring::error::Unspecified) => (Response::internal_server_error(), ErrorResponse{detail: "no detail".to_string()}),
             Error::NoSessionCreator => (Response::internal_server_error(), ErrorResponse{detail: "missconfiguration".to_string()}),
             Error::Custom(e) => (Response::internal_server_error(), ErrorResponse{detail: e.to_string()})
@@ -69,8 +75,10 @@ impl std::fmt::Display for Error {
             Error::Parse(detail) => format!("parse error: {}", detail),
             Error::Timeout => format!("timeout reached"),
             Error::Url(detail) => format!("url parse error: {}", detail),
+            Error::Session(detail) => format!("session management error: {}", detail),
             Error::ExtractionBR(detail) => format!("extraction bad request: {}", detail),
             Error::ExtractionSE(detail) => format!("extraction server error: {}", detail),
+            Error::SerdeJson(detail) => format!("serde json error: {}", detail),
             Error::Ring(e) => format!("ring error: {}", e),
             Error::NoSessionCreator => format!("the session extractor requires a SessionCreator struct to work, see documentation"),
             Error::Custom(e) => format!("{}", e)
@@ -80,3 +88,9 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+impl From<serde_json::Error> for Error {
+    fn from(source: serde_json::Error) -> Error {
+        Error::SerdeJson(source)
+    }
+}

@@ -4,69 +4,62 @@ mod session_creator;
 mod cookie_session;
 
 use crate::{Extractor, Error, http::{Request, Response}, additional::Additional};
-use std::collections::HashMap;
 use std::sync::Arc;
+use serde::{Serialize, de::{DeserializeOwned}};
 
-/// Working sessions, but not finished
-pub struct Session {
-    values: HashMap<String, String>,
-    changed: bool,
+/// More advanced session, with strongly typed functionality
+pub struct Session<B = std::collections::HashMap<String, String>> {
+    inner: Option<B>,
     session_creator: Arc<Box<dyn SessionCreator>>
 }
 
-impl Session {
+impl<B> Session<B> {
     /// Creates a new session
-    fn new<A: 'static + SessionCreator>(session_creator: A) -> Session {
-        let session_creator: Arc<Box<dyn SessionCreator>> = Arc::new(Box::new(session_creator));
+    fn new(session_creator: Arc<Box<dyn SessionCreator>>) -> Session<B> {
         Session{
-            values: HashMap::new(),
-            changed: false,
+            inner: None,
             session_creator
         }
     }
+}
 
-    /// Creates a new session
-    pub fn new_with_values<A: 'static + SessionCreator>(session_creator: A, values: HashMap<String, String>) -> Session {
-        let mut session = Session::new(session_creator);
-        session.values = values;
-        session
+impl<B> std::ops::Deref for Session<B> {
+    type Target = Option<B>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
-impl Session {
-    /// Sets a new value in the session
-    pub fn set<A: Into<String>, B: Into<String>>(&mut self, key: A, value: B) {
-        self.changed = true;
-        self.values.insert(key.into(), value.into());
+impl<B> std::ops::DerefMut for Session<B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
+}
 
-    /// Retrieves a value from the session
-    pub fn get<T: AsRef<str>>(&self, key: T) -> Option<&String> {
-        self.values.get(key.as_ref())
-    }
-
-    /// Clears all values in the session
-    pub fn clear(&mut self) {
-        self.changed = true;
-        self.values.clear();
-    }
-
+impl<B: Send + Serialize> Session<B> {
     /// Applies all the changes of the session to the response.
     ///
     /// It is not the most elegant solution, but soon a new one will be worked out to apply the session changes to the response (probably using layers).
-    pub fn apply(self, req: Response) -> Response {
-        if self.changed {
-            self.session_creator.apply(&self.values, req)
-        } else {
-            req
-        }
+    pub fn apply(self, req: Response) -> Result<Response, Error> {
+        let content = serde_json::to_string(&self.inner)?;
+        self.session_creator.apply(content, req)
     }
 }
 
-impl<T: Sync> Extractor<T> for Session {
+impl<T: Sync, B: 'static + Send + DeserializeOwned> Extractor<T> for Session<B> {
     fn extract(req: &Request, additional: Arc<Additional<T>>) -> Result<Self, Error> {
         if let Some(session_creator) = &additional.session_creator {
-            session_creator.create(req)
+            match session_creator.parse(req)? {
+                Some(content) => {
+                    let inner = serde_json::from_str(&content).map_err(|e| Error::ExtractionBR(format!("{}", e)))?;
+                    Ok(Session {
+                        inner,
+                        session_creator: session_creator.clone()
+                    })
+                },
+                None => Ok(Session::new(session_creator.clone()))
+            }
         } else {
             // Forcefully log an error message, as this should be quickly noticed by the developer
             log::error!("cataclysm error: you need to setup a `SessionCreator` before you try to use the `Session` extractor!");

@@ -88,7 +88,13 @@ impl<T: Sync + Send> ServerBuilder<T> {
     ///     // the session will be empty if the signature was invalid
     ///     // ... do something with the session
     ///     // apply changes to response
-    ///     session.apply(Response::ok())
+    ///     match session.apply(Response::ok()) {
+    ///         Ok(response) => response,
+    ///         Err(e) => {
+    ///             println!("error when applying session to response, {}", e);
+    ///             Response::internal_server_error()
+    ///         }
+    ///     }
     /// }
     /// 
     /// #[tokio::main]

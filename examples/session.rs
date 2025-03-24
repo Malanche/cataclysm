@@ -4,24 +4,43 @@ use misc::SimpleLogger;
 mod misc;
 
 async fn index(session: Session) -> Response {
-    match session.get("username") {
-        Some(username) => {
-            log::info!("processing request for user {}", username);
-            let message = format!("Hello, {}", username);
-            session.apply(Response::ok().body(message))
+    match &*session {
+        Some(valid_session) => {
+            match valid_session.get("username") {
+                Some(username) => {
+                    log::info!("processing request for user {}", username);
+                    let message = format!("Hello, {}", username);
+                    Response::ok().body(message)
+                },
+                None => {
+                    log::info!("rejecting request with no field `username` in session");
+                    Response::unauthorized()
+                }
+            }
         },
-        None => {
-            log::info!("rejecting request with empty session");
-            Response::unauthorized()
-        }
+        None => Response::unauthorized()
     }
 }
 
 async fn login(path: Path<(String,)>, mut session: Session) -> Response {
     let (username, ) = path.into_inner();
-    log::info!("creating cookie session for user {}", username);
-    session.set("username", username);
-    session.apply(Response::ok())
+    match &*session {
+        Some(_valid_session) => {
+            log::info!("valid username, can't override");
+            Response::ok()
+        },
+        None => {
+            log::info!("creating cookie session for user {}", username);
+            *session = Some(vec![("username".to_string(), username)].into_iter().collect());
+            match session.apply(Response::ok()) {
+                Ok(response) => response,
+                Err(e) => {
+                    log::error!("{}", e);
+                    Response::internal_server_error()
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
